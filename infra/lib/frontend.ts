@@ -26,6 +26,12 @@ export class Frontend extends Construct {
       },
     });
 
+    const indexRewrite = new cloudfront.Function(this, 'IndexRewrite', {
+      comment: 'Serve index.html for folder URLs such as /admin/',
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromFile({ filePath: path.join(repoRoot, 'infra/lib/index-rewrite.js') }),
+    });
+
     this.distribution = new cloudfront.Distribution(this, 'Cdn', {
       comment: 'Shop storefront',
       defaultRootObject: 'index.html',
@@ -36,6 +42,7 @@ export class Frontend extends Construct {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         responseHeadersPolicy: securityHeaders,
         compress: true,
+        functionAssociations: [{ function: indexRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }],
       },
       additionalBehaviors: {
         '/images/*': {
