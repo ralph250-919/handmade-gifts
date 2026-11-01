@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end tests (local dev server)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: CDK synth
+        run: npx cdk synth --quiet
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: us-east-1
+
+  # Optional: deploy on every push to main. Create an IAM role trusted by GitHub OIDC
+  # (https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
+  # and set repository variables AWS_DEPLOY_ROLE_ARN and AWS_REGION to enable it.
+  # Put your cdk.json context values (emails etc.) in cdk.json before enabling.
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: npx cdk deploy --require-approval never
+      - name: Smoke test the live shop
+        run: |
+          npx playwright install --with-deps chromium
+          export BASE_URL=$(aws cloudformation describe-stacks --stack-name HandmadeGiftsShop --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)
+          npx playwright test --project=desktop

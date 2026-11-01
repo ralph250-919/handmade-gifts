@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Shop admin</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" data-shop-name>Shop</a>
+      <div class="row"><span class="muted" id="who"></span><button class="btn secondary small" id="logout" hidden>Sign out</button></div>
+    </div>
+  </header>
+  <main class="wrap">
+    <div id="status" role="status" aria-live="polite" style="margin-top:16px"></div>
+
+    <section id="signin" class="hero" hidden>
+      <h1>Shop admin</h1>
+      <p>Sign in to manage products and orders.</p>
+      <p style="margin-top:24px"><button class="btn" id="login">Sign in</button></p>
+    </section>
+
+    <section id="app" hidden>
+      <div class="admin-tabs" role="tablist">
+        <button class="btn secondary small" role="tab" data-tab="orders" aria-selected="true">Orders</button>
+        <button class="btn secondary small" role="tab" data-tab="products" aria-selected="false">Products</button>
+      </div>
+
+      <div data-panel="orders" class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">Orders</h2>
+          <label class="row">Show
+            <select id="order-status" class="btn secondary small">
+              <option value="PAID">To ship</option>
+              <option value="SHIPPED">Shipped</option>
+              <option value="PENDING">Abandoned / in checkout</option>
+              <option value="EXPIRED">Expired checkouts</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </label>
+        </div>
+        <div id="orders"></div>
+      </div>
+
+      <div data-panel="products" hidden class="stack">
+        <div class="panel">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">Products</h2>
+            <button class="btn small" id="new-product">Add product</button>
+          </div>
+          <div class="table-wrap"><table class="table" id="products"></table></div>
+        </div>
+        <form class="panel form" id="product-form" hidden>
+          <h2 style="margin:0" id="form-title">Add product</h2>
+          <input type="hidden" name="id">
+          <label>Name <input name="name" required maxlength="120"></label>
+          <label>Description <textarea name="description" maxlength="5000" placeholder="Materials, size, care, the story behind it…"></textarea></label>
+          <div class="two">
+            <label>Price <input name="price" type="number" step="0.01" min="0.5" required></label>
+            <label>Stock <input name="stock" type="number" min="0" placeholder="Blank = made to order"></label>
+            <label>Category <input name="category" maxlength="60" placeholder="e.g. Ceramics"></label>
+          </div>
+          <label class="checkbox"><input type="checkbox" name="active" checked> Visible in shop</label>
+          <div>
+            <strong style="font-size:.9rem">Photos</strong> <span class="muted" style="font-size:.85rem">(first photo is the main one; square or 4:5 portrait looks best)</span>
+            <div class="images" id="images" style="margin-top:8px"></div>
+            <label class="btn secondary small" style="margin-top:8px;display:inline-flex;font-weight:600">Upload photos<input type="file" id="upload" accept="image/jpeg,image/png,image/webp" multiple class="sr-only"></label>
+          </div>
+          <div class="row">
+            <button class="btn" type="submit">Save</button>
+            <button class="btn secondary" type="button" id="cancel-edit">Cancel</button>
+            <button class="btn danger small" type="button" id="delete" hidden>Delete</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/assets/admin.js"></script>
+</body>
+</html>
