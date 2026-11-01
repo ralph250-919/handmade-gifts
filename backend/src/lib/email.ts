@@ -12,6 +12,11 @@ export interface EmailMessage {
   html: string;
 }
 
+/** Emails are optional: without a verified SENDER_EMAIL the shop skips them (Stripe can send receipts instead). */
+export function emailEnabled(): boolean {
+  return Boolean(process.env.SENDER_EMAIL);
+}
+
 export async function sendEmail(msg: EmailMessage): Promise<void> {
   const from = process.env.SENDER_EMAIL;
   if (!from) throw new Error('SENDER_EMAIL is not configured');

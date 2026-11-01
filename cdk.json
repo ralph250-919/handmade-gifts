@@ -4,7 +4,7 @@
   "context": {
     "shopName": "Handmade Gifts",
     "currency": "usd",
-    "allowedShippingCountries": ["US"],
+    "allowedShippingCountries": ["US", "CA"],
     "shippingStandardCents": 600,
     "freeShippingOverCents": 7500,
     "adminEmail": "",

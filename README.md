@@ -54,10 +54,34 @@ npm run test:e2e    # browser tests: browse → cart → pay → admin → ship 
    | `shippingStandardCents` / `freeShippingOverCents` | Flat shipping rate and free-shipping threshold (0 = never free) |
    | `adminEmail` | Your login. Cognito emails you a temporary password |
    | `alertEmail` | Where alarms, budget alerts and new-order notifications go |
-   | `senderEmail` | The "from" address for customer emails. AWS sends a verification link to it |
+   | `senderEmail` | *Optional.* The "from" address for customer emails, on a domain you own (e.g. `orders@yourshop.com`). AWS sends a verification link to it. Leave it empty to turn shop emails off; Stripe can send receipts instead (see below). Free email addresses like @yahoo.com or @gmail.com won't work, because those providers reject mail sent "as" them from other services. |
    | `monthlyBudgetUsd` | You get an alert at 80% of this amount |
 
 ## 3. Deploy
+
+### Easiest: from AWS CloudShell (nothing to install)
+
+Sign in to the [AWS Console](https://console.aws.amazon.com). Pick a region in the top-right corner (US East (N. Virginia) `us-east-1` is a good default), then click the **CloudShell** icon `>_` in the top bar. Paste these commands one at a time:
+
+```bash
+git clone https://github.com/ralph250-919/handmade-gifts.git && cd handmade-gifts
+```
+
+```bash
+npm_config_cache=/tmp/npm-cache npm ci --no-audit --no-fund
+```
+
+```bash
+npx cdk bootstrap
+```
+
+```bash
+npx cdk deploy -c adminEmail=YOU@example.com -c alertEmail=YOU@example.com
+```
+
+Replace `YOU@example.com` with your email. Passing it on the command line keeps it out of the public repo. When CDK asks "Do you wish to deploy these changes", type `y`. If you come back later, CloudShell keeps your files, so just `cd handmade-gifts && git pull` and run the deploy command again.
+
+### From your own computer
 
 ```bash
 npx cdk deploy
@@ -83,6 +107,10 @@ After the first deploy:
    ```
 5. Sign in at `AdminUrl`, add products and photos, and tick **Visible in shop**.
 6. **Run a test purchase** with card `4242 4242 4242 4242`, any future date and any CVC. The order appears in Admin → Orders → *To ship*, and you and the customer both get emails.
+
+### If you deployed without `senderEmail`
+
+The shop sends no emails of its own, but orders still appear in the admin and alarms still reach you. In Stripe, go to **Settings → Business → Customer emails** and turn on **Successful payments**, so customers get a receipt. Then go to **Settings → Personal details → Communication preferences** and turn on **Successful payments**, so you get an email for every order. When you have your own domain, add `-c senderEmail=orders@yourdomain.com` to the deploy command.
 
 ### Getting out of the SES sandbox
 

@@ -26,6 +26,8 @@ export interface FulfillmentDeps {
 export interface FulfillmentSettings {
   shopName: string;
   ownerEmail?: string;
+  /** false when no sender address is configured: emails are skipped, not counted as failures. */
+  emailEnabled?: boolean;
   siteUrl: string;
 }
 
@@ -94,6 +96,10 @@ async function markPaid(deps: FulfillmentDeps, session: CheckoutSessionInfo, set
     }
   }
 
+  if (settings.emailEnabled === false) {
+    deps.log('info', 'Order emails are turned off (no sender address configured)', { orderId: order.id });
+    return 'paid';
+  }
   const emails: EmailMessage[] = [];
   if (order.customerEmail) emails.push(orderConfirmationEmail(order, settings.shopName));
   if (settings.ownerEmail) emails.push(newOrderOwnerEmail(order, settings.ownerEmail, settings.siteUrl));
