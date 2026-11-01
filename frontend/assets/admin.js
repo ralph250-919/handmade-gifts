@@ -130,8 +130,9 @@ async function loadOrders() {
         const body = Object.fromEntries(new FormData(f));
         f.querySelector('button').disabled = true;
         try {
-          const { emailed } = await call(`/api/admin/orders/${encodeURIComponent(f.dataset.ship)}/ship`, { method: 'POST', body });
-          status(emailed ? 'Marked as shipped and the customer was emailed.' : 'Marked as shipped (the email could not be sent — please contact the customer).', emailed ? 'ok' : 'error');
+          const { emailed, emailDisabled } = await call(`/api/admin/orders/${encodeURIComponent(f.dataset.ship)}/ship`, { method: 'POST', body });
+          if (emailDisabled) status('Marked as shipped. Shop emails are turned off, so let the customer know (their email is on the order).', 'ok');
+          else status(emailed ? 'Marked as shipped and the customer was emailed.' : 'Marked as shipped (the email could not be sent — please contact the customer).', emailed ? 'ok' : 'error');
           loadOrders();
         } catch (err) {
           status(escapeHtml(err.message), 'error');

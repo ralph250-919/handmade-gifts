@@ -1,7 +1,7 @@
 import type Stripe from 'stripe';
 import { env } from '../lib/config.js';
 import * as db from '../lib/db.js';
-import { sendEmail } from '../lib/email.js';
+import { emailEnabled, sendEmail } from '../lib/email.js';
 import { handleCheckoutEvent, type CheckoutSessionInfo } from '../lib/fulfillment.js';
 import { httpHandler, json, rawBody } from '../lib/http.js';
 import { countMetric, logger, Metric } from '../lib/observability.js';
@@ -60,7 +60,7 @@ export const handler = httpHandler(async (event) => {
       },
       stripeEvent.type,
       toSessionInfo(stripeEvent.data.object as Stripe.Checkout.Session),
-      { shopName: env('SHOP_NAME'), ownerEmail: process.env.OWNER_EMAIL || undefined, siteUrl: env('SITE_URL') },
+      { shopName: env('SHOP_NAME'), ownerEmail: process.env.OWNER_EMAIL || undefined, siteUrl: env('SITE_URL'), emailEnabled: emailEnabled() },
     );
     return json(200, { received: true, outcome });
   } catch (err) {

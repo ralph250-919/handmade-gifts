@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import * as db from '../lib/db.js';
-import { sendEmail, shippedEmail } from '../lib/email.js';
+import { emailEnabled, sendEmail, shippedEmail } from '../lib/email.js';
 import { UserFacingError } from '../lib/errors.js';
 import { adminEmail, httpHandler, json, parseJsonBody } from '../lib/http.js';
 import { countMetric, logger, Metric } from '../lib/observability.js';
@@ -31,6 +31,7 @@ export const handler = httpHandler(async (event) => {
   logger.info('Order shipped', { orderId: id, by: adminEmail(event) });
 
   let emailed = false;
+  if (!emailEnabled()) return json(200, { order, emailed, emailDisabled: true });
   if (order.customerEmail) {
     try {
       await sendEmail(shippedEmail(order, process.env.SHOP_NAME ?? 'Our shop'));

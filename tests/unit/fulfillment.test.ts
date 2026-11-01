@@ -84,6 +84,15 @@ describe('handleCheckoutEvent', () => {
     expect(metrics.filter((m) => m === 'OrderEmailFailed')).toHaveLength(2);
   });
 
+  it('skips emails without counting failures when no sender is configured', async () => {
+    const { deps, orders, metrics } = fakeDeps();
+    expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), { ...settings, emailEnabled: false })).toBe('paid');
+    expect(orders.get('cs_test_123')!.status).toBe('PAID');
+    expect(deps.decrementStock).toHaveBeenCalled();
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+    expect(metrics).not.toContain('OrderEmailFailed');
+  });
+
   it('expires abandoned checkouts', async () => {
     const { deps, orders, metrics } = fakeDeps();
     expect(await handleCheckoutEvent(deps, 'checkout.session.expired', session({ paymentStatus: 'unpaid' }), settings)).toBe('expired');
