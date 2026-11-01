@@ -1,0 +1,8 @@
+[
+  { "slug": "speckled-stoneware-mug", "name": "Speckled Stoneware Mug", "description": "Wheel-thrown stoneware mug with a speckled oatmeal glaze. Holds about 12 oz.\n\nDishwasher and microwave safe. Each mug is unique — glaze patterns vary.", "priceCents": 3200, "stock": 6, "category": "Ceramics", "image": "mug" },
+  { "slug": "hand-poured-soy-candle", "name": "Hand-Poured Soy Candle", "description": "Small-batch soy wax candle in a reusable amber jar. Scent: cedar, fig and a little smoke.\n\nApprox. 40 hours burn time.", "priceCents": 2400, "stock": 12, "category": "Candles", "image": "candle" },
+  { "slug": "macrame-wall-hanging", "name": "Macramé Wall Hanging", "description": "Knotted from soft recycled cotton cord on a driftwood branch. About 45 cm wide.", "priceCents": 5800, "stock": 2, "category": "Home", "image": "macrame" },
+  { "slug": "personalised-leather-keyring", "name": "Personalised Leather Keyring", "description": "Vegetable-tanned leather, hand-stitched and stamped with up to 3 initials.\n\nAdd the initials you'd like in the order notes or reply to your confirmation email.", "priceCents": 1800, "stock": null, "category": "Leather", "image": "keyring" },
+  { "slug": "watercolour-greeting-cards", "name": "Watercolour Greeting Cards (set of 4)", "description": "Original botanical watercolours printed on textured recycled card, with kraft envelopes. Blank inside.", "priceCents": 1600, "stock": 20, "category": "Paper", "image": "cards" },
+  { "slug": "chunky-knit-throw", "name": "Chunky Knit Throw", "description": "Hand-knitted from merino wool. Roughly 100 × 130 cm — made to order in your choice of colour.", "priceCents": 14500, "stock": null, "category": "Textiles", "image": "throw" }
+]

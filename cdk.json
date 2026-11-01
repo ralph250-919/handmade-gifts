@@ -1,0 +1,16 @@
+{
+  "app": "npx tsx infra/app.ts",
+  "watch": { "include": ["infra/**", "backend/src/**", "frontend/**"] },
+  "context": {
+    "shopName": "Handmade Gifts",
+    "currency": "usd",
+    "allowedShippingCountries": ["US"],
+    "shippingStandardCents": 600,
+    "freeShippingOverCents": 7500,
+    "adminEmail": "",
+    "alertEmail": "",
+    "senderEmail": "",
+    "monthlyBudgetUsd": 20,
+    "cognitoDomainPrefix": ""
+  }
+}
