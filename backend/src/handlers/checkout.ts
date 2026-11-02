@@ -62,6 +62,12 @@ export const handler = httpHandler(async (event) => {
     // Customer-caused problems (sold out, empty cart) vs. our failures (Stripe down, misconfig).
     countMetric(err instanceof UserFacingError ? Metric.CheckoutRejected : Metric.CheckoutFailed);
     if (!(err instanceof UserFacingError)) {
+      // Record the real cause (e.g. a Stripe error) before hiding it behind a friendly message.
+      const e = err as Error & { type?: string; code?: string; statusCode?: number; requestId?: string };
+      logger.error('Checkout failed', {
+        error: { name: e.name, message: e.message, stack: e.stack },
+        stripe: e.type ? { type: e.type, code: e.code, statusCode: e.statusCode, requestId: e.requestId } : undefined,
+      });
       throw new UserFacingError(502, "We couldn't start checkout right now. Please try again in a minute — your cart is saved.", 'CHECKOUT_UNAVAILABLE');
     }
     throw err;
