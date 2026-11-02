@@ -157,7 +157,7 @@ When a customer hits an error, the message includes a **reference** (the request
 
 | Alarm | What it means | First steps |
 |---|---|---|
-| **CanaryFailing** | The robot shopper couldn't use the site for 10 minutes. | Open the canary run to see the screenshot and failing step. If `api-health` failed, check its response: `payments:false` means the Stripe secret is missing or invalid, and `database:false` means a DynamoDB or permissions problem. If only `home-page` failed, check CloudFront and recent deploys. |
+| **CanaryFailing** | The robot shopper couldn't use the site for 10 minutes. | Open the canary run to see the screenshot and failing step. If `api-health` failed, open `/api/health` and read its `problems` list (see **Payment setup problems** below). `database:false` means a DynamoDB or permissions problem. If only `home-page` failed, check CloudFront and recent deploys. |
 | **CheckoutFailures** | 3+ customers in 15 minutes couldn't start checkout. | Run the "Shop errors" query filtered to `route = "POST /api/checkout"`. Common causes are an invalid or rotated Stripe key, a Stripe outage (https://status.stripe.com) or an unsupported country or currency. Customers' carts are saved, so they can retry. |
 | **WebhookFailures** | Stripe's payment notifications are failing, so paid orders may stay "Abandoned/in checkout". | Stripe Dashboard → Webhooks → your endpoint → failed deliveries. `Invalid signature` means the `STRIPE_WEBHOOK_SECRET` is wrong, often because test and live are mixed up. Stripe retries for 3 days, so once fixed, click **Resend** on failed events. |
 | **OrderEmailFailures** | An order or shipping email wasn't sent. | Usually the SES sandbox or an unverified sender. The order is still saved, so email the customer manually from the admin. |
@@ -165,6 +165,19 @@ When a customer hits an error, the message includes a **reference** (the request
 | **Api5xx / *Function*Errors** | Server errors. | "Shop errors" query. If it started right after a deploy, roll back by redeploying the previous commit. |
 | **ApiSlow** | p95 latency over 2 s for 15 minutes. | "Slow or failed API requests" query and the X-Ray trace map. Usually a slow dependency, such as Stripe. |
 | **BrowserErrors** | Shoppers are hitting JavaScript errors. | CloudWatch RUM → Errors shows the message, page and browser. |
+
+### Payment setup problems
+
+`/api/health` checks with Stripe itself, every 5 minutes through the canary. It doesn't just check that the keys look right. These codes appear in its `problems` list, with details in the **Health** function's logs:
+
+| Code | What customers see | Fix |
+|---|---|---|
+| `stripe_key_rejected` | "We couldn't start checkout right now" | The saved `STRIPE_SECRET_KEY` is wrong. A common cause is the **publishable** key (`pk_test_…`) instead of the **secret** key (`sk_test_…`), or a key that was rolled. Copy the secret key from Developers → API keys, test it with `curl https://api.stripe.com/v1/balance -u "sk_test_…:"`, and save it to the secret. |
+| `webhook_endpoint_missing` | Payment succeeds, but the order stays under **Abandoned / in checkout** | There's no enabled webhook for `<site>/api/webhooks/stripe` in the **same Stripe account and mode** as the key. Create it (section 3), then save its `whsec_…`. |
+| `webhook_events_missing` | Some orders never update | Add the missing events (listed in the logs) to the endpoint. |
+| `stripe_unreachable` | Checkout may fail | Stripe outage or network problem. Check https://status.stripe.com. |
+
+A wrong `whsec_` can't be detected in advance, because Stripe never reveals signing secrets. It shows up as the **WebhookFailures** alarm (`Invalid signature` in Stripe's delivery log) instead. Fix it by saving the endpoint's signing secret, then clicking **Resend** on the failed delivery.
 
 ---
 
