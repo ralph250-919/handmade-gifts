@@ -5,51 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Handmade Gifts</title>
   <meta name="description" content="Hand-created gifts, made with care in small batches.">
-  <meta name="theme-color" content="#f8f6f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12132a" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Handmade Gifts">
   <meta property="og:description" content="Hand-created gifts, made with care in small batches.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,500;0,600;0,700;0,800;1,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
   <script type="module" src="/assets/rum.js"></script>
 </head>
 <body data-page="home">
-  <div class="announce" data-announce>Handmade in small batches · Secure checkout by Stripe</div>
   <header class="site-header">
     <div class="wrap">
       <a class="brand" href="/" data-shop-name>Handmade Gifts</a>
       <nav class="nav" aria-label="Main">
         <a class="nav-link" href="/#shop">Shop</a>
-        <a class="cart-link" href="/cart.html" aria-label="Cart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7h12l-1 13H7L6 7z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg><span>Cart</span> <span class="cart-count" data-cart-count>0</span></a>
+        <a class="nav-link" href="/#filters">Categories</a>
+        <a class="nav-link" href="/#shop">New pieces</a>
+        <a class="nav-link cart-link" href="/cart.html" aria-label="Cart"><span>Cart</span> <span class="cart-count" data-cart-count>0</span></a>
       </nav>
     </div>
   </header>
-  <main class="wrap" id="main">
-    <section class="hero-split">
-      <div class="hero">
-        <div class="eyebrow">Made by hand, in small batches</div>
-        <h1>Gifts made <em>slowly</em>, by hand.</h1>
-        <p>Small-batch pieces crafted one at a time. When something sells out, the next one is already on the workbench.</p>
-        <div class="actions"><a class="btn" href="#shop">Shop the collection</a></div>
+  <main id="main">
+    <section class="hero hero-center wrap">
+      <h1>Handmade Gift Gallery &amp; Small-Batch Inspiration</h1>
+      <p>Browse our collection of <span id="count">handmade</span> pieces by category, price &amp; availability, each one crafted slowly, by hand&hellip; <a href="#shop">Start browsing</a></p>
+    </section>
+    <section class="filters wrap" id="filters" aria-label="Filter the collection">
+      <div class="filter-group">
+        <span class="filter-label" id="filter-label">Filter by:</span>
+        <div class="filter-row" role="group" aria-labelledby="filter-label">
+          <label class="select"><span class="sr-only">Category</span><select id="f-category"><option value="">Categories</option></select></label>
+          <label class="select"><span class="sr-only">Sort by price</span><select id="f-sort"><option value="">Price</option><option value="asc">Price: low to high</option><option value="desc">Price: high to low</option></select></label>
+          <label class="select"><span class="sr-only">Availability</span><select id="f-stock"><option value="">Availability</option><option value="in">In stock</option><option value="mto">Made to order</option></select></label>
+        </div>
       </div>
-      <div class="mosaic" id="mosaic" aria-hidden="true"></div>
+      <div class="filter-group">
+        <span class="filter-label">Or:</span>
+        <a class="btn-cta" href="/cart.html">View your cart<svg viewBox="0 0 10 12" aria-hidden="true"><path d="M1 1l8 5-8 5z" fill="currentColor"/></svg></a>
+      </div>
     </section>
-    <section class="perks" aria-label="Why shop with us">
-      <div class="perk"><div><strong>Made by hand</strong><span>Every piece is crafted one at a time</span></div></div>
-      <div class="perk"><div><strong data-ship-perk>Shipping</strong><span data-ship-perk-detail>Calculated at checkout</span></div></div>
-      <div class="perk"><div><strong>Secure checkout</strong><span>Payments handled by Stripe</span></div></div>
-    </section>
-    <section id="shop" aria-labelledby="shop-title">
-      <div class="section-head"><h2 id="shop-title">The collection</h2><span class="count" id="count"></span></div>
-      <div class="chips" id="chips" role="group" aria-label="Filter by category"></div>
-    </section>
-    <div id="status" role="status" aria-live="polite"></div>
-    <section class="grid" data-testid="product-grid" id="grid" aria-label="Products">
-      <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
-    </section>
+    <div class="wrap" id="shop">
+      <div id="status" role="status" aria-live="polite"></div>
+      <section class="grid" data-testid="product-grid" id="grid" aria-label="Products">
+        <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+      </section>
+    </div>
   </main>
   <footer class="site-footer">
     <div class="wrap">
