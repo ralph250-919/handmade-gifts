@@ -8,17 +8,27 @@ const status = (html, kind = '') => {
   if (el) el.innerHTML = html ? `<div class="notice ${kind}">${html}</div>` : '';
 };
 
+// One shared request for the catalog: header, footer and page content all use it.
+let productsPromise;
+const loadProducts = () => (productsPromise ??= api('/api/products').then((r) => r.products));
+const categoriesOf = (products) => [...new Set(products.map((p) => p.category).filter(Boolean))];
+const categoryUrl = (c) => `/?cat=${encodeURIComponent(c)}#shop`;
+const productUrl = (p) => `/product.html?slug=${encodeURIComponent(p.slug)}`;
+
 async function init() {
   renderCartCount();
   for (const el of document.querySelectorAll('[data-year]')) el.textContent = String(new Date().getFullYear());
+  setupBackToTop();
   try {
     const config = await getConfig();
     for (const el of document.querySelectorAll('[data-shop-name]')) el.textContent = config.shopName;
-    applyShippingCopy(config);
+    const foot = $('[data-ship-foot]');
+    if (foot) foot.textContent = shippingLine(config);
     if (document.title.includes('Handmade Gifts')) document.title = document.title.replace('Handmade Gifts', config.shopName);
   } catch {
     /* keep defaults */
   }
+  renderCategoryLinks();
   const page = document.body.dataset.page;
   if (page === 'home') return renderHome();
   if (page === 'product') return renderProduct();
@@ -29,10 +39,29 @@ async function init() {
   }
 }
 
-const icon = {
-  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',
-  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
-};
+function setupBackToTop() {
+  const btn = $('[data-to-top]');
+  if (!btn) return;
+  const update = () => (btn.hidden = window.scrollY < 600);
+  window.addEventListener('scroll', update, { passive: true });
+  btn.addEventListener('click', () => window.scrollTo({ top: 0 }));
+  update();
+}
+
+/** Category links in the header and footer, built from the live catalog. */
+async function renderCategoryLinks() {
+  try {
+    const cats = categoriesOf(await loadProducts());
+    const current = new URLSearchParams(location.search).get('cat');
+    const links = cats.map((c) => `<a href="${categoryUrl(c)}"${c === current ? ' aria-current="page"' : ''}>${escapeHtml(c)}</a>`).join('');
+    const nav = $('[data-nav-cats]');
+    if (nav) nav.innerHTML = links;
+    const foot = $('[data-foot-cats]');
+    if (foot) foot.innerHTML = links;
+  } catch {
+    /* links are optional */
+  }
+}
 
 function shippingLine(config, currency = config.currency || 'usd') {
   if (config.freeShippingOverCents > 0) return `Free shipping on orders over ${money(config.freeShippingOverCents, currency)}`;
@@ -40,57 +69,64 @@ function shippingLine(config, currency = config.currency || 'usd') {
   return 'Free shipping on every order';
 }
 
-function applyShippingCopy(config) {
-  const line = shippingLine(config);
-  const bar = document.querySelector('[data-announce]');
-  if (bar) bar.textContent = `${line} · Every piece made by hand`;
-  const perk = document.querySelector('[data-ship-perk]');
-  if (perk) perk.textContent = config.freeShippingOverCents > 0 ? `Free shipping over ${money(config.freeShippingOverCents, config.currency || 'usd')}` : 'Shipped with care';
-  const detail = document.querySelector('[data-ship-perk-detail]');
-  if (detail && config.shippingStandardCents > 0) detail.textContent = `Otherwise a flat ${money(config.shippingStandardCents, config.currency || 'usd')}`;
+function availability(p) {
+  if (!p.available) return { text: 'Sold out', cls: 'sold' };
+  if (p.lowStock) return { text: `Only ${p.lowStock} left`, cls: 'low' };
+  if (p.madeToOrder) return { text: 'Made to order', cls: '' };
+  return { text: 'In stock', cls: '' };
 }
 
-function badgeFor(p) {
-  if (!p.available) return '<span class="badge sold">Sold out</span>';
-  if (p.lowStock) return `<span class="badge">Only ${p.lowStock} left</span>`;
-  if (p.madeToOrder) return '<span class="badge mto">Made to order</span>';
-  return '';
-}
-
-function card(p, i = 0) {
+function card(p) {
   const img = p.images[0] || placeholderImage;
-  return `<a class="card fade-in${p.available ? '' : ' is-sold'}" style="animation-delay:${Math.min(i, 8) * 60}ms" href="/product.html?slug=${encodeURIComponent(p.slug)}">
-    <div class="media"><img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy">${badgeFor(p)}<span class="view" aria-hidden="true">View details</span></div>
-    <div class="body"><div><h3>${escapeHtml(p.name)}</h3>${p.category ? `<div class="cat">${escapeHtml(p.category)}</div>` : ''}</div><span class="price">${money(p.priceCents, p.currency)}</span></div>
+  const a = availability(p);
+  const note = a.cls ? `<div class="note ${a.cls}">${a.text}</div>` : '';
+  return `<a class="card${p.available ? '' : ' is-sold'}" href="${productUrl(p)}">
+    <div class="media"><img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy"></div>
+    <div class="body">
+      <h3 title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</h3>
+      ${p.category ? `<div class="cat">${escapeHtml(p.category)}</div>` : ''}
+      <div class="price">${money(p.priceCents, p.currency)}</div>
+      ${note}
+    </div>
   </a>`;
 }
+
+const sortAvailableFirst = (products) => [...products].sort((a, b) => Number(b.available) - Number(a.available));
 
 async function renderHome() {
   const grid = $('#grid');
   try {
-    const { products } = await api('/api/products');
-    // Available pieces first; the API order is kept within each group.
-    const sorted = [...products].sort((a, b) => Number(b.available) - Number(a.available));
-    renderMosaic(sorted);
-    const categories = [...new Set(sorted.map((p) => p.category).filter(Boolean))];
-    let active = 'All';
+    const sorted = sortAvailableFirst(await loadProducts());
+    const categories = categoriesOf(sorted);
+    renderHero(sorted, categories);
+
+    const params = new URLSearchParams(location.search);
+    let active = categories.includes(params.get('cat')) ? params.get('cat') : 'All';
+    const filters = $('#filters');
+
     const draw = () => {
       const shown = active === 'All' ? sorted : sorted.filter((p) => p.category === active);
-      $('#count').textContent = `${shown.length} ${shown.length === 1 ? 'piece' : 'pieces'}`;
+      const inStock = shown.filter((p) => p.available).length;
+      $('#shop-title').textContent = active === 'All' ? 'Featured' : active;
+      $('#stats').innerHTML = `<strong>${shown.length}</strong> ${shown.length === 1 ? 'piece' : 'pieces'} · <strong>${inStock}</strong> available now${active === 'All' && categories.length ? ` · <strong>${categories.length}</strong> ${categories.length === 1 ? 'category' : 'categories'}` : ''}`;
       grid.innerHTML = shown.length
         ? shown.map(card).join('')
         : '<div class="empty"><p>New pieces are on the workbench. Check back soon!</p></div>';
+      filters.querySelectorAll('.filter').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.cat === active)));
     };
-    const chips = $('#chips');
+
     if (categories.length > 1) {
-      chips.innerHTML = ['All', ...categories]
-        .map((c) => `<button type="button" class="chip" aria-pressed="${c === active}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`)
+      filters.innerHTML = ['All', ...categories]
+        .map((c) => `<button type="button" class="filter" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`)
         .join('');
-      chips.addEventListener('click', (e) => {
+      filters.addEventListener('click', (e) => {
         const b = e.target.closest('[data-cat]');
         if (!b) return;
         active = b.dataset.cat;
-        chips.querySelectorAll('.chip').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        const url = new URL(location.href);
+        if (active === 'All') url.searchParams.delete('cat');
+        else url.searchParams.set('cat', active);
+        history.replaceState(null, '', url);
         draw();
       });
     }
@@ -101,14 +137,25 @@ async function renderHome() {
   }
 }
 
-/** Hero collage of up to three product photos (available pieces first). */
-function renderMosaic(products) {
-  const el = $('#mosaic');
-  if (!el) return;
-  const withPhotos = products.filter((p) => p.images[0]).slice(0, 3);
-  el.innerHTML = withPhotos
-    .map((p) => `<a href="/product.html?slug=${encodeURIComponent(p.slug)}" tabindex="-1"><img src="${escapeHtml(p.images[0])}" alt=""></a>`)
-    .join('');
+/** Split hero: two product photos side by side, with a button per category (up to two). */
+function renderHero(products, categories) {
+  const media = $('#hero-media');
+  const photos = products.filter((p) => p.images[0]).slice(0, 2);
+  if (media && photos.length) {
+    media.innerHTML = [0, 1]
+      .map((i) => {
+        const p = photos[i] ?? photos[0];
+        return `<div><img src="${escapeHtml(p.images[0])}" alt="" ${i ? 'loading="lazy"' : ''}></div>`;
+      })
+      .join('');
+  }
+  const actions = $('#hero-actions');
+  if (actions && categories.length > 1) {
+    actions.innerHTML = categories
+      .slice(0, 2)
+      .map((c) => `<a class="btn white" href="${categoryUrl(c)}">${escapeHtml(c)}</a>`)
+      .join('');
+  }
 }
 
 async function renderProduct() {
@@ -124,42 +171,50 @@ async function renderProduct() {
   }
   document.title = `${p.name} · ${document.title.split(' · ').pop()}`;
   const config = await getConfig().catch(() => ({}));
-  const crumbs = $('#crumbs');
-  if (crumbs) crumbs.innerHTML = `<a href="/">Shop</a><span aria-hidden="true">/</span>${p.category ? `<a href="/#shop">${escapeHtml(p.category)}</a><span aria-hidden="true">/</span>` : ''}<span aria-current="page">${escapeHtml(p.name)}</span>`;
+  const shopName = config.shopName || 'Handmade Gifts';
+  const sep = '<span class="sep" aria-hidden="true">›</span>';
+  $('#crumbs').innerHTML = `<a href="/">Shop</a>${p.category ? `${sep}<a href="${categoryUrl(p.category)}">${escapeHtml(p.category)}</a>` : ''}${sep}<span aria-current="page">${escapeHtml(p.name)}</span>`;
+
   const images = p.images.length ? p.images : [placeholderImage];
+  const a = availability(p);
   el.innerHTML = `
-    <div class="gallery fade-in">
-      <div class="main"><img class="backdrop" id="main-backdrop" src="${escapeHtml(images[0])}" alt="" aria-hidden="true"><img id="main-img" src="${escapeHtml(images[0])}" alt="${escapeHtml(p.name)}"></div>
-      ${images.length > 1 ? `<div class="thumbs">${images.map((src, i) => `<button type="button" data-src="${escapeHtml(src)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="${escapeHtml(src)}" alt=""></button>`).join('')}</div>` : ''}
-    </div>
-    <div class="info fade-in" style="animation-delay:80ms">
+    <div class="info">
       <div>
-        ${p.category ? `<div class="eyebrow">${escapeHtml(p.category)}</div>` : ''}
         <h1>${escapeHtml(p.name)}</h1>
-        <div class="row"><span class="price">${money(p.priceCents, p.currency)}</span>${badgeFor(p)}</div>
+        <p class="byline">by <a href="/">${escapeHtml(shopName)}</a></p>
       </div>
+      ${p.description ? `<p class="description">${escapeHtml(p.description)}</p>` : ''}
+      <ul class="details">
+        ${p.category ? `<li>Category: ${escapeHtml(p.category)}</li>` : ''}
+        <li>Availability: ${a.text}</li>
+        ${p.madeToOrder ? '<li>Made to order. Please allow extra time for crafting before it ships.</li>' : ''}
+        <li>${escapeHtml(shippingLine(config, p.currency))}</li>
+        <li><strong>Secure checkout by Stripe</strong></li>
+      </ul>
+      <div class="price-block"><span class="label">Price</span><span class="price">${money(p.priceCents, p.currency)}</span></div>
       ${
         p.available
-          ? `<div class="buy">
+          ? `<div class="buy-row">
               <div class="qty"><button type="button" data-step="-1" aria-label="Decrease quantity">−</button><input id="qty" type="number" min="1" max="${p.lowStock || 20}" value="1" aria-label="Quantity"><button type="button" data-step="1" aria-label="Increase quantity">+</button></div>
-              <button class="btn" data-testid="add-to-cart" id="add">Add to cart</button>
+              <button class="btn buy" data-testid="add-to-cart" id="add">Add to cart</button>
+              <a class="btn" href="/cart.html">View cart</a>
             </div>`
-          : '<button class="btn block" data-testid="add-to-cart" disabled>Sold out</button>'
+          : `<div class="buy-row">
+              <button class="btn" data-testid="add-to-cart" disabled>Sold out</button>
+              <a class="btn" href="/#shop">Keep shopping</a>
+            </div>`
       }
       <div id="added" role="status" aria-live="polite"></div>
-      ${p.madeToOrder ? '<p class="muted" style="margin:0">Made to order. Please allow extra time for crafting before it ships.</p>' : ''}
-      ${p.description ? `<div class="description">${escapeHtml(p.description)}</div>` : ''}
-      <ul class="facts">
-        <li>Made by hand, one at a time</li>
-        <li>${escapeHtml(shippingLine(config, p.currency))}</li>
-        <li>Secure checkout by Stripe</li>
-      </ul>
+      <div class="tags">${p.category ? `<a href="${categoryUrl(p.category)}">${escapeHtml(p.category)}</a>` : ''}<a href="/#shop">All pieces</a></div>
+    </div>
+    <div class="gallery">
+      <div class="main"><img id="main-img" src="${escapeHtml(images[0])}" alt="${escapeHtml(p.name)}"></div>
+      ${images.length > 1 ? `<div class="thumbs">${images.map((src, i) => `<button type="button" data-src="${escapeHtml(src)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="${escapeHtml(src)}" alt=""></button>`).join('')}</div>` : ''}
     </div>`;
 
   el.querySelectorAll('.thumbs button').forEach((b) =>
     b.addEventListener('click', () => {
       $('#main-img').src = b.dataset.src;
-      $('#main-backdrop').src = b.dataset.src;
       el.querySelectorAll('.thumbs button').forEach((x) => x.setAttribute('aria-current', String(x === b)));
     }),
   );
@@ -173,8 +228,23 @@ async function renderProduct() {
     const n = Math.max(1, Math.min(Number(qty.max), Number(qty.value) || 1));
     cart.add(p, n);
     track('add_to_cart', { productId: p.id, quantity: n });
-    $('#added').innerHTML = `<div class="notice ok fade-in">Added to your cart. <a href="/cart.html">View cart &amp; check out</a></div>`;
+    $('#added').innerHTML = `<div class="notice ok">Added to your cart. <a href="/cart.html">View cart &amp; check out</a></div>`;
   });
+
+  renderRelated(p);
+}
+
+/** Other pieces: same category first, then everything else (available first). */
+async function renderRelated(p) {
+  try {
+    const others = sortAvailableFirst((await loadProducts()).filter((x) => x.id !== p.id));
+    if (!others.length) return;
+    const ranked = [...others.filter((x) => x.category && x.category === p.category), ...others.filter((x) => !x.category || x.category !== p.category)];
+    $('#related-grid').innerHTML = ranked.slice(0, 8).map(card).join('');
+    $('#related').hidden = false;
+  } catch {
+    /* related items are optional */
+  }
 }
 
 async function renderCart() {
@@ -206,7 +276,7 @@ async function renderCart() {
             (i) => `<div class="line">
               <img src="${escapeHtml(i.image || placeholderImage)}" alt="">
               <div><a href="/product.html?slug=${encodeURIComponent(i.slug)}"><strong>${escapeHtml(i.name)}</strong></a>
-                <div class="muted" style="font-size:.88rem">${money(i.priceCents, i.currency)} each</div>
+                <div class="muted" style="font-size:.8rem">${money(i.priceCents, i.currency)} each</div>
                 <div class="row" style="margin-top:10px">
                   <div class="qty"><button type="button" data-id="${i.productId}" data-step="-1" aria-label="Decrease">−</button><input value="${i.quantity}" readonly aria-label="Quantity"><button type="button" data-id="${i.productId}" data-step="1" aria-label="Increase">+</button></div>
                   <button class="link-btn" data-remove="${i.productId}">Remove</button>
@@ -221,9 +291,9 @@ async function renderCart() {
         ${meter}
         <div class="split"><span class="muted">Subtotal</span><span class="price">${money(subtotal, currency)}</span></div>
         <div class="split"><span class="muted">Shipping</span><span>${shippingCents ? money(shippingCents, currency) : 'Free'}</span></div>
-        <div class="split" style="border-top:1px solid var(--line);padding-top:14px"><strong>Estimated total</strong><span class="total">${money(subtotal + shippingCents, currency)}</span></div>
-        <button class="btn block" id="checkout" data-testid="checkout">${icon.lock}Checkout securely</button>
-        <div class="muted" style="font-size:.84rem;text-align:center">You'll enter your address and payment on Stripe's secure page.</div>
+        <div class="split" style="border-top:1px solid var(--soft-2);padding-top:12px"><strong>Estimated total</strong><span class="total">${money(subtotal + shippingCents, currency)}</span></div>
+        <button class="btn buy block" id="checkout" data-testid="checkout">Checkout securely</button>
+        <div class="muted" style="font-size:.78rem;text-align:center">You'll enter your address and payment on Stripe's secure page.</div>
       </aside>`;
 
     el.querySelectorAll('[data-step]').forEach((b) =>
@@ -253,7 +323,7 @@ async function renderCart() {
       track('checkout_error', { code: err.code, status: err.status });
       status(escapeHtml(err.message), 'error');
       btn.disabled = false;
-      btn.innerHTML = `${icon.lock}Checkout securely`;
+      btn.textContent = 'Checkout securely';
       if (err.code === 'UNAVAILABLE' || err.code === 'OUT_OF_STOCK') refreshCart();
     }
   }
@@ -261,6 +331,7 @@ async function renderCart() {
   // Remove items that were deleted or sold out since they were added, and refresh prices.
   async function refreshCart() {
     try {
+      // Always fetch fresh here: this also runs after checkout reports a stock change.
       const { products } = await api('/api/products');
       const byId = new Map(products.map((p) => [p.id, p]));
       const changed = [];
