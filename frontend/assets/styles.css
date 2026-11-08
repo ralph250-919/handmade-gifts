@@ -85,8 +85,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .mosaic:empty { display: none; }
 
 .perks { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 8px 0 24px; }
-.perk { background: var(--surface); padding: 18px 20px; display: flex; gap: 14px; align-items: center; }
-.perk svg { width: 22px; height: 22px; flex: none; color: var(--accent); }
+.perk { background: var(--surface); padding: 18px 20px; }
 .perk strong { display: block; font-size: .92rem; font-weight: 600; }
 .perk span { display: block; font-size: .84rem; color: var(--muted); }
 
@@ -161,9 +160,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .qty input::-webkit-inner-spin-button, .qty input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .line .qty button { width: 34px; height: 34px; font-size: 1rem; }
 .line .qty input { width: 30px; }
-.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.facts li { display: flex; gap: 12px; align-items: center; font-size: .92rem; color: var(--muted); }
-.facts svg { width: 20px; height: 20px; flex: none; color: var(--ink); }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.facts li { font-size: .92rem; color: var(--muted); }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .stack { display: grid; gap: 16px; align-content: start; }
 

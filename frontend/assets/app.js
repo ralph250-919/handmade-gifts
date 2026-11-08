@@ -30,8 +30,6 @@ async function init() {
 }
 
 const icon = {
-  hand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.6-7 10-7 10z"/></svg>',
-  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>',
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',
   arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
 };
@@ -152,9 +150,9 @@ async function renderProduct() {
       ${p.madeToOrder ? '<p class="muted" style="margin:0">Made to order. Please allow extra time for crafting before it ships.</p>' : ''}
       ${p.description ? `<div class="description">${escapeHtml(p.description)}</div>` : ''}
       <ul class="facts">
-        <li>${icon.hand}Made by hand, one at a time</li>
-        <li>${icon.box}${escapeHtml(shippingLine(config, p.currency))}</li>
-        <li>${icon.lock}Secure checkout by Stripe</li>
+        <li>Made by hand, one at a time</li>
+        <li>${escapeHtml(shippingLine(config, p.currency))}</li>
+        <li>Secure checkout by Stripe</li>
       </ul>
     </div>`;
 
