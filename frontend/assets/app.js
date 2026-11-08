@@ -14,7 +14,6 @@ async function init() {
   try {
     const config = await getConfig();
     for (const el of document.querySelectorAll('[data-shop-name]')) el.textContent = config.shopName;
-    applyShippingCopy(config);
     if (document.title.includes('Handmade Gifts')) document.title = document.title.replace('Handmade Gifts', config.shopName);
   } catch {
     /* keep defaults */
@@ -40,16 +39,6 @@ function shippingLine(config, currency = config.currency || 'usd') {
   return 'Free shipping on every order';
 }
 
-function applyShippingCopy(config) {
-  const line = shippingLine(config);
-  const bar = document.querySelector('[data-announce]');
-  if (bar) bar.textContent = `${line} · Every piece made by hand`;
-  const perk = document.querySelector('[data-ship-perk]');
-  if (perk) perk.textContent = config.freeShippingOverCents > 0 ? `Free shipping over ${money(config.freeShippingOverCents, config.currency || 'usd')}` : 'Shipped with care';
-  const detail = document.querySelector('[data-ship-perk-detail]');
-  if (detail && config.shippingStandardCents > 0) detail.textContent = `Otherwise a flat ${money(config.shippingStandardCents, config.currency || 'usd')}`;
-}
-
 function badgeFor(p) {
   if (!p.available) return '<span class="badge sold">Sold out</span>';
   if (p.lowStock) return `<span class="badge">Only ${p.lowStock} left</span>`;
@@ -71,44 +60,37 @@ async function renderHome() {
     const { products } = await api('/api/products');
     // Available pieces first; the API order is kept within each group.
     const sorted = [...products].sort((a, b) => Number(b.available) - Number(a.available));
-    renderMosaic(sorted);
+    const available = sorted.filter((p) => p.available).length;
+    $('#count').textContent = `${available || sorted.length} handmade`;
     const categories = [...new Set(sorted.map((p) => p.category).filter(Boolean))];
-    let active = 'All';
+    const catSelect = $('#f-category');
+    catSelect.insertAdjacentHTML('beforeend', categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join(''));
+    catSelect.closest('.select').hidden = categories.length < 2;
+    const filters = { category: catSelect, sort: $('#f-sort'), stock: $('#f-stock') };
+
     const draw = () => {
-      const shown = active === 'All' ? sorted : sorted.filter((p) => p.category === active);
-      $('#count').textContent = `${shown.length} ${shown.length === 1 ? 'piece' : 'pieces'}`;
+      const cat = filters.category.value;
+      const stock = filters.stock.value;
+      let shown = sorted.filter(
+        (p) =>
+          (!cat || p.category === cat) &&
+          (!stock || (stock === 'in' ? p.available && !p.madeToOrder : p.madeToOrder)),
+      );
+      if (filters.sort.value) {
+        const dir = filters.sort.value === 'asc' ? 1 : -1;
+        shown = [...shown].sort((a, b) => dir * (a.priceCents - b.priceCents));
+      }
+      for (const el of Object.values(filters)) el.classList.toggle('is-set', Boolean(el.value));
       grid.innerHTML = shown.length
         ? shown.map(card).join('')
-        : '<div class="empty"><p>New pieces are on the workbench. Check back soon!</p></div>';
+        : '<div class="empty"><p>Nothing matches those filters yet. New pieces are on the workbench!</p></div>';
     };
-    const chips = $('#chips');
-    if (categories.length > 1) {
-      chips.innerHTML = ['All', ...categories]
-        .map((c) => `<button type="button" class="chip" aria-pressed="${c === active}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`)
-        .join('');
-      chips.addEventListener('click', (e) => {
-        const b = e.target.closest('[data-cat]');
-        if (!b) return;
-        active = b.dataset.cat;
-        chips.querySelectorAll('.chip').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-        draw();
-      });
-    }
+    for (const el of Object.values(filters)) el.addEventListener('change', draw);
     draw();
   } catch (err) {
     grid.innerHTML = '';
     status(`${escapeHtml(err.message)} <button class="link-btn" onclick="location.reload()">Try again</button>`, 'error');
   }
-}
-
-/** Hero collage of up to three product photos (available pieces first). */
-function renderMosaic(products) {
-  const el = $('#mosaic');
-  if (!el) return;
-  const withPhotos = products.filter((p) => p.images[0]).slice(0, 3);
-  el.innerHTML = withPhotos
-    .map((p) => `<a href="/product.html?slug=${encodeURIComponent(p.slug)}" tabindex="-1"><img src="${escapeHtml(p.images[0])}" alt=""></a>`)
-    .join('');
 }
 
 async function renderProduct() {
