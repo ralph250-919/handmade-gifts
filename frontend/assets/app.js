@@ -10,6 +10,7 @@ const status = (html, kind = '') => {
 
 async function init() {
   renderCartCount();
+  setupHeader();
   for (const el of document.querySelectorAll('[data-year]')) el.textContent = String(new Date().getFullYear());
   try {
     const config = await getConfig();
@@ -48,44 +49,103 @@ function badgeFor(p) {
 
 function card(p, i = 0) {
   const img = p.images[0] || placeholderImage;
-  return `<a class="card fade-in${p.available ? '' : ' is-sold'}" style="animation-delay:${Math.min(i, 8) * 60}ms" href="/product.html?slug=${encodeURIComponent(p.slug)}">
-    <div class="media"><img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy">${badgeFor(p)}<span class="view" aria-hidden="true">View details</span></div>
-    <div class="body"><div><h3>${escapeHtml(p.name)}</h3>${p.category ? `<div class="cat">${escapeHtml(p.category)}</div>` : ''}</div><span class="price">${money(p.priceCents, p.currency)}</span></div>
+  return `<a class="card fade-in${p.available ? '' : ' is-sold'}" style="animation-delay:${Math.min(i, 8) * 40}ms" href="/product.html?slug=${encodeURIComponent(p.slug)}">
+    <div class="media"><img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy">${badgeFor(p)}</div>
+    <div class="body"><h3>${escapeHtml(p.name)}</h3><div class="meta">${p.category ? `<span class="cat">${escapeHtml(p.category)}</span><span aria-hidden="true">·</span>` : ''}<span class="price">${money(p.priceCents, p.currency)}</span></div></div>
   </a>`;
+}
+
+/** Search box and tab row in the header, shared by every storefront page. */
+function setupHeader() {
+  const params = new URLSearchParams(location.search);
+  const q = $('#q');
+  if (q) q.value = params.get('q') ?? '';
+  const page = document.body.dataset.page;
+  const tab = page === 'cart' ? 'cart' : page === 'home' ? params.get('stock') || 'all' : '';
+  for (const a of document.querySelectorAll('.tabs [data-tab]')) {
+    if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
 }
 
 async function renderHome() {
   const grid = $('#grid');
+  const params = new URLSearchParams(location.search);
+  const state = { q: params.get('q') ?? '', stock: params.get('stock') ?? '', cat: params.get('cat') ?? '', sort: params.get('sort') ?? '' };
+  const sortSelect = $('#f-sort');
+  sortSelect.value = state.sort;
   try {
     const { products } = await api('/api/products');
     // Available pieces first; the API order is kept within each group.
     const sorted = [...products].sort((a, b) => Number(b.available) - Number(a.available));
-    const available = sorted.filter((p) => p.available).length;
-    $('#count').textContent = `${available || sorted.length} handmade`;
     const categories = [...new Set(sorted.map((p) => p.category).filter(Boolean))];
-    const catSelect = $('#f-category');
-    catSelect.insertAdjacentHTML('beforeend', categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join(''));
-    catSelect.closest('.select').hidden = categories.length < 2;
-    const filters = { category: catSelect, sort: $('#f-sort'), stock: $('#f-stock') };
 
-    const draw = () => {
-      const cat = filters.category.value;
-      const stock = filters.stock.value;
+    const circles = $('#circles');
+    if (categories.length > 1) {
+      circles.innerHTML = categories
+        .map((c) => {
+          const photo = sorted.find((p) => p.category === c && p.images[0])?.images[0] || placeholderImage;
+          return `<button type="button" class="circle" data-cat="${escapeHtml(c)}" aria-pressed="false"><span class="ring"><img src="${escapeHtml(photo)}" alt="" loading="lazy"><span class="plus" aria-hidden="true"></span></span><span class="label">${escapeHtml(c)}</span></button>`;
+        })
+        .join('');
+      $('#categories').hidden = false;
+      circles.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-cat]');
+        if (!b) return;
+        state.cat = state.cat === b.dataset.cat ? '' : b.dataset.cat;
+        draw();
+      });
+    }
+
+    const syncUrl = () => {
+      const u = new URLSearchParams();
+      for (const [k, v] of Object.entries(state)) if (v) u.set(k, v);
+      history.replaceState(null, '', u.size ? `/?${u}` : '/');
+      setupHeader();
+    };
+
+    function draw() {
+      const q = state.q.trim().toLowerCase();
       let shown = sorted.filter(
         (p) =>
-          (!cat || p.category === cat) &&
-          (!stock || (stock === 'in' ? p.available && !p.madeToOrder : p.madeToOrder)),
+          (!state.cat || p.category === state.cat) &&
+          (!state.stock || (state.stock === 'in' ? p.available && !p.madeToOrder : p.madeToOrder)) &&
+          (!q || `${p.name} ${p.category ?? ''} ${p.description ?? ''}`.toLowerCase().includes(q)),
       );
-      if (filters.sort.value) {
-        const dir = filters.sort.value === 'asc' ? 1 : -1;
+      if (state.sort) {
+        const dir = state.sort === 'asc' ? 1 : -1;
         shown = [...shown].sort((a, b) => dir * (a.priceCents - b.priceCents));
       }
-      for (const el of Object.values(filters)) el.classList.toggle('is-set', Boolean(el.value));
+      circles.querySelectorAll('[data-cat]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.cat === state.cat)));
+      $('#grid-label').textContent = q ? `Results for “${state.q.trim()}”` : state.cat || (state.stock === 'in' ? 'In stock' : state.stock === 'mto' ? 'Made to order' : 'Top picks');
+      $('#count').textContent = `${shown.length} ${shown.length === 1 ? 'item' : 'items'}`;
       grid.innerHTML = shown.length
         ? shown.map(card).join('')
-        : '<div class="empty"><p>Nothing matches those filters yet. New pieces are on the workbench!</p></div>';
-    };
-    for (const el of Object.values(filters)) el.addEventListener('change', draw);
+        : '<div class="empty"><p>Nothing matches that yet. New pieces are on the workbench!</p><a class="btn secondary" href="/">See everything</a></div>';
+      syncUrl();
+    }
+
+    sortSelect.addEventListener('change', () => ((state.sort = sortSelect.value), draw()));
+    // On the home page the search box and tabs filter in place instead of reloading.
+    $('.search')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      state.q = $('#q').value;
+      draw();
+      $('#shop').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    document.querySelectorAll('.tabs [data-tab]').forEach((a) => {
+      if (a.dataset.tab === 'cart') return;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        state.stock = a.dataset.tab === 'all' ? '' : a.dataset.tab;
+        if (a.dataset.tab === 'all') {
+          state.cat = '';
+          state.q = '';
+          $('#q').value = '';
+        }
+        draw();
+      });
+    });
     draw();
   } catch (err) {
     grid.innerHTML = '';

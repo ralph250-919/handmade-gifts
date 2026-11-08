@@ -6,27 +6,33 @@
   <title>Your cart · Handmade Gifts</title>
   <meta name="description" content="Hand-created gifts, made with care in small batches.">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#12132a" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Your cart · Handmade Gifts">
   <meta property="og:description" content="Hand-created gifts, made with care in small batches.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,500;0,600;0,700;0,800;1,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css">
   <script type="module" src="/assets/rum.js"></script>
 </head>
 <body data-page="cart">
   <header class="site-header">
-    <div class="wrap">
+    <div class="wrap header-row">
       <a class="brand" href="/" data-shop-name>Handmade Gifts</a>
-      <nav class="nav" aria-label="Main">
-        <a class="nav-link" href="/#shop">Shop</a>
-        <a class="nav-link" href="/#filters">Categories</a>
-        <a class="nav-link" href="/#shop">New pieces</a>
-        <a class="nav-link cart-link" href="/cart.html" aria-label="Cart"><span>Cart</span> <span class="cart-count" data-cart-count>0</span></a>
-      </nav>
+      <form class="search" action="/" role="search">
+        <label class="sr-only" for="q">Search the shop</label>
+        <input id="q" name="q" type="search" placeholder="Shop for anything" autocomplete="off">
+        <button type="submit" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/></svg></button>
+      </form>
+      <a class="cart-link" href="/cart.html" aria-label="Cart"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42a.25.25 0 0 1-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z" fill="currentColor"/></svg><span class="cart-count" data-cart-count>0</span></a>
     </div>
+    <nav class="tabs wrap" aria-label="Shop sections">
+      <a href="/" data-tab="all">All</a>
+      <a href="/?stock=in" data-tab="in">In stock</a>
+      <a href="/?stock=mto" data-tab="mto">Made to order</a>
+      <a href="/cart.html" data-tab="cart">Your cart</a>
+    </nav>
   </header>
   <main class="wrap" id="main">
     <h1 class="page-title">Your cart</h1>
