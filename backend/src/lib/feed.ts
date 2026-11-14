@@ -1,4 +1,5 @@
 import type { Product } from './types.js';
+import { absoluteUrl } from './urls.js';
 
 /**
  * Builds a product catalog CSV in the Meta (Facebook/Instagram) Commerce format.
@@ -18,16 +19,12 @@ export function buildCatalogCsv(products: Product[], siteUrl: string, brand: str
       'new',
       `${(p.priceCents / 100).toFixed(2)} ${p.currency.toUpperCase()}`,
       `${siteUrl}/product.html?slug=${encodeURIComponent(p.slug)}`,
-      absolute(siteUrl, p.images[0]!),
-      p.images.slice(1, 10).map((i) => absolute(siteUrl, i)).join(','),
+      absoluteUrl(siteUrl, p.images[0]!),
+      p.images.slice(1, 10).map((i) => absoluteUrl(siteUrl, i)).join(','),
       brand,
       p.category ?? '',
     ]);
   return [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n') + '\n';
-}
-
-function absolute(siteUrl: string, path: string): string {
-  return /^https?:\/\//.test(path) ? path : `${siteUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
 export function csvEscape(value: string): string {

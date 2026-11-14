@@ -7,9 +7,11 @@ import {
   PutCommand,
   QueryCommand,
   ScanCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { env } from './config.js';
+import type { StockResult } from './fulfillment.js';
 import { tracer } from './observability.js';
 import type { Order, OrderStatus, Product } from './types.js';
 
@@ -23,6 +25,15 @@ const ordersTable = () => env('ORDERS_TABLE');
 function isConditionFailure(err: unknown): boolean {
   return (err as { name?: string })?.name === 'ConditionalCheckFailedException';
 }
+
+/** For a cancelled transaction, which of its items (by index) failed their condition. */
+function failedTransactionItems(err: unknown): number[] | undefined {
+  const e = err as { name?: string; CancellationReasons?: { Code?: string }[] };
+  if (e?.name !== 'TransactionCanceledException') return undefined;
+  return (e.CancellationReasons ?? []).flatMap((r, i) => (r.Code === 'ConditionalCheckFailed' ? [i] : []));
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------- Products ----------
 
@@ -51,10 +62,12 @@ export async function getProductBySlug(slug: string): Promise<Product | undefine
       IndexName: 'bySlug',
       KeyConditionExpression: 'slug = :s',
       ExpressionAttributeValues: { ':s': slug },
-      Limit: 1,
     }),
   );
-  return res.Items?.[0] as Product | undefined;
+  // Slugs should be unique, but the check that keeps them so reads an eventually
+  // consistent index. If two products ever share one, always pick the oldest.
+  const matches = (res.Items ?? []) as Product[];
+  return matches.sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 }
 
 export async function getProductsByIds(ids: string[]): Promise<Map<string, Product>> {
@@ -64,7 +77,9 @@ export async function getProductsByIds(ids: string[]): Promise<Map<string, Produ
   let request: Record<string, { Keys: Record<string, unknown>[] }> | undefined = {
     [productsTable()]: { Keys: [...new Set(ids)].map((id) => ({ id })) },
   };
-  while (request && Object.keys(request).length > 0) {
+  for (let attempt = 0; request && Object.keys(request).length > 0; attempt++) {
+    // Unprocessed keys mean DynamoDB is throttling us: back off before asking again.
+    if (attempt > 0) await sleep(Math.min(50 * 2 ** attempt, 1000));
     const res = await doc.send(new BatchGetCommand({ RequestItems: request }));
     for (const p of (res.Responses?.[productsTable()] ?? []) as Product[]) map.set(p.id, p);
     request = res.UnprocessedKeys as typeof request;
@@ -78,28 +93,6 @@ export async function putProduct(product: Product): Promise<void> {
 
 export async function deleteProduct(id: string): Promise<void> {
   await doc.send(new DeleteCommand({ TableName: productsTable(), Key: { id } }));
-}
-
-/** Atomically reduces stock. Returns false if there was not enough stock. Made-to-order items (stock null) always succeed. */
-export async function decrementStock(productId: string, quantity: number): Promise<boolean> {
-  const product = await getProduct(productId);
-  if (!product) return false;
-  if (product.stock === null) return true;
-  try {
-    await doc.send(
-      new UpdateCommand({
-        TableName: productsTable(),
-        Key: { id: productId },
-        UpdateExpression: 'SET stock = stock - :q, updatedAt = :now',
-        ConditionExpression: 'stock >= :q',
-        ExpressionAttributeValues: { ':q': quantity, ':now': new Date().toISOString() },
-      }),
-    );
-    return true;
-  } catch (err) {
-    if (isConditionFailure(err)) return false;
-    throw err;
-  }
 }
 
 // ---------- Orders ----------
@@ -122,7 +115,7 @@ export async function getOrder(id: string): Promise<Order | undefined> {
  */
 export async function transitionOrder(
   id: string,
-  from: OrderStatus[],
+  from: readonly OrderStatus[],
   to: OrderStatus,
   fields: Partial<Order> = {},
 ): Promise<Order | undefined> {
@@ -157,30 +150,122 @@ export async function transitionOrder(
   }
 }
 
-export async function addOrderIssue(id: string, issue: string): Promise<void> {
+// ---------- Fulfilment (see lib/fulfillment.ts) ----------
+
+/** Appends `productId` to the order's stockHandled list, but only if it isn't there yet. */
+function markStockHandled(orderId: string, productId: string, extra: { set?: string; values?: Record<string, unknown> } = {}) {
+  return {
+    TableName: ordersTable(),
+    Key: { id: orderId },
+    UpdateExpression: `SET stockHandled = list_append(if_not_exists(stockHandled, :empty), :pidList)${extra.set ? `, ${extra.set}` : ''}`,
+    ConditionExpression: 'attribute_exists(id) AND NOT contains(stockHandled, :pid)',
+    ExpressionAttributeValues: { ':empty': [], ':pidList': [productId], ':pid': productId, ...extra.values },
+  };
+}
+
+/**
+ * Takes `quantity` of a product out of stock for an order, at most once per
+ * order + product: the stock change and the order's stockHandled marker are
+ * written in one transaction, so a webhook retry can't take the same line twice.
+ */
+export async function reserveStock(orderId: string, productId: string, quantity: number): Promise<StockResult> {
+  const product = await getProduct(productId);
+  if (!product) return 'missing';
+
+  if (product.stock === null) {
+    // Made to order: nothing to take out of stock, just record that the line is handled.
+    try {
+      await doc.send(new UpdateCommand(markStockHandled(orderId, productId)));
+      return 'reserved';
+    } catch (err) {
+      if (isConditionFailure(err)) return 'already-handled';
+      throw err;
+    }
+  }
+
+  try {
+    await doc.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          { Update: markStockHandled(orderId, productId) },
+          {
+            Update: {
+              TableName: productsTable(),
+              Key: { id: productId },
+              UpdateExpression: 'SET stock = stock - :q, updatedAt = :now',
+              ConditionExpression: 'stock >= :q',
+              ExpressionAttributeValues: { ':q': quantity, ':now': new Date().toISOString() },
+            },
+          },
+        ],
+      }),
+    );
+    return 'reserved';
+  } catch (err) {
+    const failed = failedTransactionItems(err);
+    if (!failed) throw err;
+    if (failed.includes(0)) return 'already-handled';
+    if (failed.includes(1)) return 'insufficient';
+    throw err; // cancelled for another reason (e.g. a conflicting transaction): let Stripe retry
+  }
+}
+
+/** Records a stock problem for one order line, at most once per order + product. Returns false if it was already handled. */
+export async function flagStockIssue(orderId: string, productId: string, issue: string): Promise<boolean> {
+  try {
+    await doc.send(
+      new UpdateCommand(
+        markStockHandled(orderId, productId, {
+          set: 'issues = list_append(if_not_exists(issues, :empty), :issue)',
+          values: { ':issue': [issue] },
+        }),
+      ),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
+export async function markFulfilled(id: string): Promise<void> {
   await doc.send(
     new UpdateCommand({
       TableName: ordersTable(),
       Key: { id },
-      UpdateExpression: 'SET issues = list_append(if_not_exists(issues, :empty), :issue)',
-      ExpressionAttributeValues: { ':issue': [issue], ':empty': [] },
+      UpdateExpression: 'SET fulfilment = :done, updatedAt = :now',
+      ExpressionAttributeValues: { ':done': 'done', ':now': new Date().toISOString() },
     }),
   );
 }
 
-export async function listOrders(status: OrderStatus, limit = 100): Promise<Order[]> {
-  const res = await doc.send(
-    new QueryCommand({
-      TableName: ordersTable(),
-      IndexName: 'byStatus',
-      KeyConditionExpression: '#s = :s',
-      ExpressionAttributeNames: { '#s': 'status' },
-      ExpressionAttributeValues: { ':s': status },
-      ScanIndexForward: false,
-      Limit: limit,
-    }),
-  );
-  return (res.Items ?? []) as Order[];
+/** Safety cap on how many orders the admin page loads for one status. */
+export const MAX_LISTED_ORDERS = 1000;
+
+/**
+ * Orders with the given status, newest first. Pages through the index so no
+ * order is silently left out; `truncated` is true only past MAX_LISTED_ORDERS.
+ */
+export async function listOrders(status: OrderStatus): Promise<{ orders: Order[]; truncated: boolean }> {
+  const orders: Order[] = [];
+  let ExclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const res = await doc.send(
+      new QueryCommand({
+        TableName: ordersTable(),
+        IndexName: 'byStatus',
+        KeyConditionExpression: '#s = :s',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExpressionAttributeValues: { ':s': status },
+        ScanIndexForward: false,
+        Limit: MAX_LISTED_ORDERS - orders.length,
+        ExclusiveStartKey,
+      }),
+    );
+    orders.push(...((res.Items ?? []) as Order[]));
+    ExclusiveStartKey = res.LastEvaluatedKey;
+  } while (ExclusiveStartKey && orders.length < MAX_LISTED_ORDERS);
+  return { orders, truncated: ExclusiveStartKey !== undefined };
 }
 
 export async function ping(): Promise<void> {

@@ -43,6 +43,11 @@ describe('priceCart', () => {
     expect(() => priceCart(cart, catalog(product({ stock: 0 })))).toThrow(/sold out/);
   });
 
+  it('rejects duplicate lines that only go over the per-item limit once merged', () => {
+    const cart = parseCart({ items: [{ productId: 'p1', quantity: 15 }, { productId: 'p1', quantity: 10 }] });
+    expect(() => priceCart(cart, catalog(product({ stock: null })))).toThrow(/at most 20/);
+  });
+
   it('allows any quantity of made-to-order items', () => {
     const cart = parseCart({ items: [{ productId: 'p1', quantity: 10 }] });
     expect(priceCart(cart, catalog(product({ stock: null }))).subtotalCents).toBe(32000);

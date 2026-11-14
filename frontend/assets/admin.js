@@ -95,12 +95,13 @@ async function loadOrders() {
   const statusFilter = $('#order-status').value;
   $('#orders').innerHTML = '<p class="muted">Loading…</p>';
   try {
-    const { orders } = await call(`/api/admin/orders?status=${statusFilter}`);
+    const { orders, truncated } = await call(`/api/admin/orders?status=${statusFilter}`);
     if (!orders.length) {
       $('#orders').innerHTML = `<p class="empty">${statusFilter === 'PAID' ? 'Nothing to ship right now. 🎉' : 'No orders here.'}</p>`;
       return;
     }
-    $('#orders').innerHTML = orders
+    const more = truncated ? `<p class="issue">Showing the newest ${orders.length} orders only; older ones are not listed.</p>` : '';
+    $('#orders').innerHTML = more + orders
       .map(
         (o) => `<div class="order">
           <div class="row" style="justify-content:space-between">
@@ -130,8 +131,9 @@ async function loadOrders() {
         const body = Object.fromEntries(new FormData(f));
         f.querySelector('button').disabled = true;
         try {
-          const { emailed, emailDisabled } = await call(`/api/admin/orders/${encodeURIComponent(f.dataset.ship)}/ship`, { method: 'POST', body });
+          const { emailed, emailDisabled, noCustomerEmail } = await call(`/api/admin/orders/${encodeURIComponent(f.dataset.ship)}/ship`, { method: 'POST', body });
           if (emailDisabled) status('Marked as shipped. Shop emails are turned off, so let the customer know (their email is on the order).', 'ok');
+          else if (noCustomerEmail) status('Marked as shipped. This order has no customer email, so no shipping email was sent.', 'ok');
           else status(emailed ? 'Marked as shipped and the customer was emailed.' : 'Marked as shipped (the email could not be sent — please contact the customer).', emailed ? 'ok' : 'error');
           loadOrders();
         } catch (err) {
@@ -205,7 +207,8 @@ async function saveProduct(e) {
     description: f.elements.description.value,
     priceCents: Math.round(Number(f.elements.price.value) * 100),
     stock: f.elements.stock.value === '' ? null : Number(f.elements.stock.value),
-    category: f.elements.category.value || undefined,
+    // null (not undefined, which JSON drops) so clearing the field removes the category.
+    category: f.elements.category.value || null,
     active: f.elements.active.checked,
     images,
   };
@@ -228,7 +231,7 @@ async function uploadPhotos(e) {
     }
     try {
       status(`Uploading ${escapeHtml(file.name)}…`);
-      const { uploadUrl, imagePath } = await call('/api/admin/uploads', { method: 'POST', body: { contentType: file.type } });
+      const { uploadUrl, imagePath } = await call('/api/admin/uploads', { method: 'POST', body: { contentType: file.type, size: file.size } });
       const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': file.type }, body: file });
       if (!res.ok) throw new Error(`Upload failed (${res.status})`);
       images.push(imagePath);

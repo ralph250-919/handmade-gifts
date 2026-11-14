@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { startCheckout } from '../backend/src/lib/checkout.js';
 import { UserFacingError } from '../backend/src/lib/errors.js';
 import { buildCatalogCsv } from '../backend/src/lib/feed.js';
-import { handleCheckoutEvent } from '../backend/src/lib/fulfillment.js';
+import { handleCheckoutEvent, type StockResult } from '../backend/src/lib/fulfillment.js';
 import { slugify } from '../backend/src/lib/slug.js';
 import type { Order, OrderStatus, Product } from '../backend/src/lib/types.js';
 import { toPublic } from '../backend/src/handlers/products.js';
@@ -49,23 +49,37 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 const fulfillmentDeps = {
-  async transitionOrder(id: string, from: OrderStatus[], to: OrderStatus, fields: Partial<Order> = {}) {
+  async transitionOrder(id: string, from: readonly OrderStatus[], to: OrderStatus, fields: Partial<Order> = {}) {
     const o = orders.get(id);
     if (!o || !from.includes(o.status)) return undefined;
     Object.assign(o, fields, { status: to, updatedAt: now() });
     return { ...o };
   },
-  async decrementStock(id: string, q: number) {
+  async getOrder(id: string) {
+    const o = orders.get(id);
+    return o && { ...o };
+  },
+  async reserveStock(orderId: string, id: string, q: number): Promise<StockResult> {
+    const o = orders.get(orderId)!;
+    if (o.stockHandled?.includes(id)) return 'already-handled';
     const p = products.get(id);
-    if (!p) return false;
-    if (p.stock === null) return true;
-    if (p.stock < q) return false;
-    p.stock -= q;
+    if (!p) return 'missing';
+    if (p.stock !== null) {
+      if (p.stock < q) return 'insufficient';
+      p.stock -= q;
+    }
+    o.stockHandled = [...(o.stockHandled ?? []), id];
+    return 'reserved';
+  },
+  async flagStockIssue(orderId: string, productId: string, issue: string) {
+    const o = orders.get(orderId)!;
+    if (o.stockHandled?.includes(productId)) return false;
+    o.stockHandled = [...(o.stockHandled ?? []), productId];
+    o.issues = [...(o.issues ?? []), issue];
     return true;
   },
-  async addOrderIssue(id: string, issue: string) {
-    const o = orders.get(id)!;
-    o.issues = [...(o.issues ?? []), issue];
+  async markFulfilled(id: string) {
+    orders.get(id)!.fulfilment = 'done';
   },
   async sendEmail(msg: { to: string; subject: string; text: string }) {
     console.log(`\n📧 [email to ${msg.to}] ${msg.subject}\n${msg.text}\n`);
@@ -145,7 +159,7 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
   }
   if (p === '/api/admin/orders') {
     const status = url.searchParams.get('status') ?? 'PAID';
-    return send(res, 200, { orders: [...orders.values()].filter((o) => o.status === status).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+    return send(res, 200, { orders: [...orders.values()].filter((o) => o.status === status).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), truncated: false });
   }
   if ((match = p.match(/^\/api\/admin\/orders\/([^/]+)\/ship$/))) {
     const o = await fulfillmentDeps.transitionOrder(match[1]!, ['PAID'], 'SHIPPED', { ...(await json()), shippedAt: now() });
@@ -154,7 +168,8 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
     return send(res, 200, { order: o, emailed: true });
   }
   if (p === '/api/admin/uploads') {
-    const { contentType } = await json();
+    const { contentType, size } = await json();
+    if (Number(size) > 10 * 1024 * 1024) return send(res, 400, { error: 'Photos must be 10 MB or smaller', code: 'TOO_LARGE' });
     const key = `images/products/${randomUUID()}.${String(contentType).split('/')[1]}`;
     return send(res, 200, { uploadUrl: `${SITE}/dev-upload/${key}`, imagePath: `/${key}` });
   }

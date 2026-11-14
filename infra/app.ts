@@ -5,12 +5,27 @@ import { ShopStack, type ShopSettings } from './lib/shop-stack.js';
 const app = new cdk.App();
 const ctx = (key: string) => app.node.tryGetContext(key);
 
+/** Prices are entered and stored as cents everywhere, so only currencies with exactly 2 decimals work. */
+function twoDecimalCurrency(code: string): string {
+  const digits = new Intl.NumberFormat('en-US', { style: 'currency', currency: code.toUpperCase() }).resolvedOptions().maximumFractionDigits;
+  if (digits !== 2) throw new Error(`currency "${code}" has ${digits} decimal places; this shop only supports currencies with 2 (e.g. usd, eur, gbp).`);
+  return code.toLowerCase();
+}
+
+/** Reads a whole-number context value, failing the deploy on typos instead of passing "NaN" to Lambda. */
+function intContext(key: string, fallback: number): number {
+  const raw = ctx(key) ?? fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${key} must be a whole number of cents, got "${raw}"`);
+  return n;
+}
+
 const settings: ShopSettings = {
   shopName: ctx('shopName') ?? 'Handmade Gifts',
-  currency: (ctx('currency') ?? 'usd').toLowerCase(),
+  currency: twoDecimalCurrency(ctx('currency') ?? 'usd'),
   allowedShippingCountries: ctx('allowedShippingCountries') ?? ['US'],
-  shippingStandardCents: Number(ctx('shippingStandardCents') ?? 600),
-  freeShippingOverCents: Number(ctx('freeShippingOverCents') ?? 0),
+  shippingStandardCents: intContext('shippingStandardCents', 600),
+  freeShippingOverCents: intContext('freeShippingOverCents', 0),
   adminEmail: ctx('adminEmail') || undefined,
   alertEmail: ctx('alertEmail') || undefined,
   senderEmail: ctx('senderEmail') || undefined,

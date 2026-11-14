@@ -7,7 +7,10 @@ export function env(name: string): string {
 
 export function envInt(name: string, fallback: number): number {
   const v = process.env[name];
-  return v ? Number.parseInt(v, 10) : fallback;
+  if (!v) return fallback;
+  const n = Number(v);
+  if (!Number.isInteger(n)) throw new Error(`Environment variable ${name} must be a whole number, got "${v}"`);
+  return n;
 }
 
 export function envList(name: string, fallback: string[]): string[] {

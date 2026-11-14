@@ -15,6 +15,7 @@ export function toSessionInfo(s: Stripe.Checkout.Session): CheckoutSessionInfo {
     amountTotal: s.amount_total,
     shippingCents: s.shipping_cost?.amount_total ?? null,
     customerEmail: s.customer_details?.email ?? null,
+    // Fall back to the shipping name (e.g. gifts paid for by someone without a name on file).
     customerName: s.customer_details?.name ?? ship?.name ?? null,
     shippingAddress: ship
       ? {
@@ -52,8 +53,10 @@ export const handler = httpHandler(async (event) => {
     const outcome = await handleCheckoutEvent(
       {
         transitionOrder: db.transitionOrder,
-        decrementStock: db.decrementStock,
-        addOrderIssue: db.addOrderIssue,
+        getOrder: db.getOrder,
+        reserveStock: db.reserveStock,
+        flagStockIssue: db.flagStockIssue,
+        markFulfilled: db.markFulfilled,
         sendEmail,
         metric: countMetric,
         log: (level, message, extra) => logger[level](message, extra ?? {}),

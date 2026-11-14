@@ -1,4 +1,6 @@
+import type Stripe from 'stripe';
 import { parseCart, priceCart, shippingCentsFor } from './cart.js';
+import { absoluteUrl } from './urls.js';
 import type { Order, Product } from './types.js';
 
 export interface CheckoutSettings {
@@ -24,6 +26,35 @@ export interface CheckoutDeps {
   createPendingOrder(order: Order): Promise<void>;
 }
 
+/** Maps our checkout request onto Stripe's Checkout Session parameters. */
+export function toStripeSessionParams(req: SessionRequest): Stripe.Checkout.SessionCreateParams {
+  return {
+    mode: 'payment',
+    line_items: req.lineItems.map((li) => ({
+      quantity: li.quantity,
+      price_data: {
+        currency: req.currency,
+        unit_amount: li.unitAmount,
+        product_data: { name: li.name, images: li.imageUrl ? [li.imageUrl] : undefined, metadata: { productId: li.productId } },
+      },
+    })),
+    shipping_address_collection: {
+      allowed_countries: req.allowedCountries as Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[],
+    },
+    shipping_options: [
+      {
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          display_name: req.shippingCents === 0 ? 'Free shipping' : 'Standard shipping',
+          fixed_amount: { amount: req.shippingCents, currency: req.currency },
+        },
+      },
+    ],
+    success_url: req.successUrl,
+    cancel_url: req.cancelUrl,
+  };
+}
+
 /**
  * Validates and prices the cart server-side, creates a Stripe Checkout Session,
  * and records a PENDING order keyed by the session id.
@@ -43,7 +74,7 @@ export async function startCheckout(deps: CheckoutDeps, body: unknown, settings:
         name: i.name,
         unitAmount: i.unitPriceCents,
         quantity: i.quantity,
-        imageUrl: image ? (image.startsWith('http') ? image : `${settings.siteUrl}${image}`) : undefined,
+        imageUrl: image ? absoluteUrl(settings.siteUrl, image) : undefined,
       };
     }),
     shippingCents,

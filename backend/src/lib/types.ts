@@ -53,6 +53,14 @@ export interface Order {
   carrier?: string;
   /** Problems needing the owner's attention (e.g. sold more than in stock). */
   issues?: string[];
+  /** Product ids whose stock this order has already taken (or flagged as a problem). Makes fulfilment retry-safe. */
+  stockHandled?: string[];
+  /**
+   * Follow-up work after payment (stock + emails). 'pending' from the moment the
+   * order is paid until that work finishes; a webhook retry resumes 'pending' orders.
+   * Orders paid before this field existed have no value and are never resumed.
+   */
+  fulfilment?: 'pending' | 'done';
   createdAt: string;
   updatedAt: string;
   paidAt?: string;

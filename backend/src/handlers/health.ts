@@ -7,6 +7,8 @@ import { getStripe, getStripeSecrets, isConfigured } from '../lib/stripe.js';
 
 // The canary calls this every 5 minutes; cache the Stripe check so we stay well inside Stripe's rate limits.
 const CACHE_MS = 5 * 60 * 1000;
+// Failures are cached briefly, so a fix (e.g. re-adding the webhook in Stripe) shows up within a minute.
+const FAILURE_CACHE_MS = 60 * 1000;
 let cachedPayments: { at: number; key: string; result: PaymentsHealth } | undefined;
 
 async function paymentsHealth(): Promise<PaymentsHealth> {
@@ -15,7 +17,8 @@ async function paymentsHealth(): Promise<PaymentsHealth> {
     return { ok: false, problems: [{ code: 'stripe_key_rejected', detail: 'Stripe keys are not set (still REPLACE_ME or wrong format)' }] };
   }
   const cacheKey = `${secrets.STRIPE_SECRET_KEY.slice(-6)}:${secrets.STRIPE_WEBHOOK_SECRET.slice(-6)}`;
-  if (cachedPayments && cachedPayments.key === cacheKey && Date.now() - cachedPayments.at < CACHE_MS) return cachedPayments.result;
+  const maxAge = cachedPayments?.result.ok ? CACHE_MS : FAILURE_CACHE_MS;
+  if (cachedPayments && cachedPayments.key === cacheKey && Date.now() - cachedPayments.at < maxAge) return cachedPayments.result;
   const result = await checkPayments(await getStripe(), `${env('SITE_URL')}/api/webhooks/stripe`);
   cachedPayments = { at: Date.now(), key: cacheKey, result };
   return result;
@@ -26,7 +29,13 @@ export const handler = httpHandler(async () => {
   const checks: Record<string, boolean> = { database: false, payments: false };
   const problems: string[] = [];
 
-  await db.ping().then(() => (checks.database = true)).catch((e) => logger.error('DB health check failed', e));
+  try {
+    await db.ping();
+    checks.database = true;
+  } catch (e) {
+    problems.push('database_unreachable');
+    logger.error('DB health check failed', e as Error);
+  }
 
   try {
     const p = await paymentsHealth();

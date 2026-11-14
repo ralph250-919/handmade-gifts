@@ -16,9 +16,10 @@ const session = (o: Partial<CheckoutSessionInfo> = {}): CheckoutSessionInfo => (
   ...o,
 });
 
-/** In-memory fake of the order store with the same conditional semantics as DynamoDB. */
-function fakeDeps(initial: Order[] = [order()]) {
+/** In-memory fake of the order and product stores with the same conditional semantics as DynamoDB. */
+function fakeDeps(initial: Order[] = [order()], stock: Record<string, number | null> = { p1: 5 }) {
   const orders = new Map(initial.map((o) => [o.id, { ...o }]));
+  const products = new Map(Object.entries(stock));
   const metrics: string[] = [];
   const deps: FulfillmentDeps = {
     transitionOrder: vi.fn(async (id, from, to, fields) => {
@@ -27,16 +28,35 @@ function fakeDeps(initial: Order[] = [order()]) {
       Object.assign(o, fields, { status: to });
       return { ...o };
     }),
-    decrementStock: vi.fn(async () => true),
-    addOrderIssue: vi.fn(async (id, issue) => {
-      const o = orders.get(id)!;
+    getOrder: vi.fn(async (id) => {
+      const o = orders.get(id);
+      return o && { ...o };
+    }),
+    reserveStock: vi.fn(async (orderId, productId, quantity) => {
+      const o = orders.get(orderId)!;
+      if (!products.has(productId)) return 'missing' as const;
+      if (o.stockHandled?.includes(productId)) return 'already-handled' as const;
+      const left = products.get(productId)!;
+      if (left !== null && left < quantity) return 'insufficient' as const;
+      if (left !== null) products.set(productId, left - quantity);
+      o.stockHandled = [...(o.stockHandled ?? []), productId];
+      return 'reserved' as const;
+    }),
+    flagStockIssue: vi.fn(async (orderId, productId, issue) => {
+      const o = orders.get(orderId)!;
+      if (o.stockHandled?.includes(productId)) return false;
+      o.stockHandled = [...(o.stockHandled ?? []), productId];
       o.issues = [...(o.issues ?? []), issue];
+      return true;
+    }),
+    markFulfilled: vi.fn(async (id) => {
+      orders.get(id)!.fulfilment = 'done';
     }),
     sendEmail: vi.fn(async () => {}),
     metric: vi.fn((name) => void metrics.push(name)),
     log: vi.fn(),
   };
-  return { deps, orders, metrics };
+  return { deps, orders, products, metrics };
 }
 
 describe('handleCheckoutEvent', () => {
@@ -45,8 +65,8 @@ describe('handleCheckoutEvent', () => {
     const outcome = await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings);
 
     expect(outcome).toBe('paid');
-    expect(orders.get('cs_test_123')).toMatchObject({ status: 'PAID', totalCents: 7000, customerEmail: 'buyer@example.com' });
-    expect(deps.decrementStock).toHaveBeenCalledWith('p1', 2);
+    expect(orders.get('cs_test_123')).toMatchObject({ status: 'PAID', totalCents: 7000, customerEmail: 'buyer@example.com', fulfilment: 'done' });
+    expect(deps.reserveStock).toHaveBeenCalledWith('cs_test_123', 'p1', 2);
     expect(deps.sendEmail).toHaveBeenCalledTimes(2);
     expect(vi.mocked(deps.sendEmail).mock.calls.map(([m]) => m.to)).toEqual(['buyer@example.com', 'owner@shop.example']);
     expect(metrics).toContain('CheckoutCompleted');
@@ -58,7 +78,7 @@ describe('handleCheckoutEvent', () => {
     const second = await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings);
 
     expect(second).toBe('duplicate');
-    expect(deps.decrementStock).toHaveBeenCalledTimes(1);
+    expect(deps.reserveStock).toHaveBeenCalledTimes(1);
     expect(deps.sendEmail).toHaveBeenCalledTimes(2);
   });
 
@@ -70,11 +90,53 @@ describe('handleCheckoutEvent', () => {
   });
 
   it('flags the order when stock ran out (oversell) instead of failing', async () => {
-    const { deps, orders, metrics } = fakeDeps();
-    vi.mocked(deps.decrementStock).mockResolvedValue(false);
+    const { deps, orders, metrics } = fakeDeps([order()], { p1: 1 });
     expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).toBe('paid');
     expect(orders.get('cs_test_123')!.issues?.[0]).toMatch(/Not enough stock/);
     expect(metrics).toContain('StockConflict');
+  });
+
+  it('resumes after a failure part-way through, without taking stock twice', async () => {
+    const twoItems = order({
+      items: [
+        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 2 },
+        { productId: 'p2', name: 'Candle', unitPriceCents: 1800, quantity: 1 },
+      ],
+    });
+    const { deps, orders, products } = fakeDeps([twoItems], { p1: 5, p2: 3 });
+    const real = vi.mocked(deps.reserveStock).getMockImplementation()!;
+    vi.mocked(deps.reserveStock)
+      .mockImplementationOnce(real)
+      .mockRejectedValueOnce(new Error('ProvisionedThroughputExceededException'));
+
+    await expect(handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).rejects.toThrow();
+    expect(orders.get('cs_test_123')).toMatchObject({ status: 'PAID', fulfilment: 'pending' });
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+
+    // Stripe retries the webhook.
+    expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).toBe('paid');
+    expect(products.get('p1')).toBe(3); // taken once, not twice
+    expect(products.get('p2')).toBe(2);
+    expect(deps.sendEmail).toHaveBeenCalledTimes(2);
+    expect(orders.get('cs_test_123')!.fulfilment).toBe('done');
+
+    // A further retry after success is a plain duplicate.
+    expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).toBe('duplicate');
+    expect(deps.sendEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not resume orders paid before fulfilment tracking existed', async () => {
+    const { deps } = fakeDeps([order({ status: 'PAID' })]);
+    expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).toBe('duplicate');
+    expect(deps.reserveStock).not.toHaveBeenCalled();
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('explains a deleted product instead of reporting a stock conflict', async () => {
+    const { deps, orders, metrics } = fakeDeps([order()], {});
+    expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), settings)).toBe('paid');
+    expect(orders.get('cs_test_123')!.issues?.[0]).toMatch(/was deleted from the shop/);
+    expect(metrics).not.toContain('StockConflict');
   });
 
   it('records an email failure metric but still succeeds', async () => {
@@ -88,7 +150,7 @@ describe('handleCheckoutEvent', () => {
     const { deps, orders, metrics } = fakeDeps();
     expect(await handleCheckoutEvent(deps, 'checkout.session.completed', session(), { ...settings, emailEnabled: false })).toBe('paid');
     expect(orders.get('cs_test_123')!.status).toBe('PAID');
-    expect(deps.decrementStock).toHaveBeenCalled();
+    expect(deps.reserveStock).toHaveBeenCalled();
     expect(deps.sendEmail).not.toHaveBeenCalled();
     expect(metrics).not.toContain('OrderEmailFailed');
   });

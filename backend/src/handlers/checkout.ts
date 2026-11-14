@@ -1,5 +1,4 @@
-import type Stripe from 'stripe';
-import { startCheckout } from '../lib/checkout.js';
+import { startCheckout, toStripeSessionParams } from '../lib/checkout.js';
 import { env, envInt, envList } from '../lib/config.js';
 import * as db from '../lib/db.js';
 import { UserFacingError } from '../lib/errors.js';
@@ -17,32 +16,7 @@ export const handler = httpHandler(async (event) => {
         createPendingOrder: db.createPendingOrder,
         async createSession(req) {
           const stripe = await getStripe();
-          const session = await stripe.checkout.sessions.create({
-            mode: 'payment',
-            line_items: req.lineItems.map((li) => ({
-              quantity: li.quantity,
-              price_data: {
-                currency: req.currency,
-                unit_amount: li.unitAmount,
-                product_data: { name: li.name, images: li.imageUrl ? [li.imageUrl] : undefined, metadata: { productId: li.productId } },
-              },
-            })),
-            shipping_address_collection: {
-              allowed_countries: req.allowedCountries as Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[],
-            },
-            shipping_options: [
-              {
-                shipping_rate_data: {
-                  type: 'fixed_amount',
-                  display_name: req.shippingCents === 0 ? 'Free shipping' : 'Standard shipping',
-                  fixed_amount: { amount: req.shippingCents, currency: req.currency },
-                },
-              },
-            ],
-            phone_number_collection: { enabled: false },
-            success_url: req.successUrl,
-            cancel_url: req.cancelUrl,
-          });
+          const session = await stripe.checkout.sessions.create(toStripeSessionParams(req));
           if (!session.url) throw new Error('Stripe did not return a checkout URL');
           return { id: session.id, url: session.url };
         },

@@ -24,7 +24,8 @@ export function parseCart(body: unknown): CartRequest {
   if (!result.success) {
     throw new UserFacingError(400, result.error.issues[0]?.message ?? 'Invalid cart', 'INVALID_CART');
   }
-  // Merge duplicate lines for the same product.
+  // Merge duplicate lines for the same product. The merged quantity can go over
+  // MAX_QUANTITY_PER_ITEM even though each line passed the schema; priceCart checks that.
   const merged = new Map<string, number>();
   for (const item of result.data.items) {
     merged.set(item.productId, (merged.get(item.productId) ?? 0) + item.quantity);
@@ -51,6 +52,7 @@ export function priceCart(cart: CartRequest, products: Map<string, Product>): Pr
     if (!product || !product.active) {
       throw new UserFacingError(409, 'One of the items in your cart is no longer available. Please refresh your cart.', 'UNAVAILABLE');
     }
+    // Not covered by cartSchema: catches duplicate lines that only go over the limit once merged.
     if (line.quantity > MAX_QUANTITY_PER_ITEM) {
       throw new UserFacingError(400, `You can order at most ${MAX_QUANTITY_PER_ITEM} of "${product.name}".`, 'QUANTITY');
     }
