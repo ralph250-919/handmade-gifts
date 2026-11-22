@@ -31,13 +31,19 @@ export class ShopStack extends cdk.Stack {
     const { settings } = props;
 
     const storage = new Storage(this, 'Storage', { senderEmail: settings.senderEmail });
-    const frontend = new Frontend(this, 'Frontend', { siteBucket: storage.siteBucket, imagesBucket: storage.imagesBucket });
+    // Known up front so the CSP can allow exactly this sign-in host (the Cognito client in turn needs the site URL).
+    const cognitoDomainPrefix = settings.cognitoDomainPrefix ?? `shop-admin-${this.account}`;
+    const frontend = new Frontend(this, 'Frontend', {
+      siteBucket: storage.siteBucket,
+      imagesBucket: storage.imagesBucket,
+      cognitoOrigin: `https://${cognitoDomainPrefix}.auth.${this.region}.amazoncognito.com`,
+    });
     const siteUrl = `https://${frontend.distribution.distributionDomainName}`;
 
     const auth = new AdminAuth(this, 'AdminAuth', {
       siteUrl,
       adminEmail: settings.adminEmail,
-      domainPrefix: settings.cognitoDomainPrefix,
+      domainPrefix: cognitoDomainPrefix,
       allowLocalDevLogin: settings.allowLocalDevLogin,
     });
 

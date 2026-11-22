@@ -14,14 +14,16 @@ export class Frontend extends Construct {
   readonly distribution: cloudfront.Distribution;
   private readonly siteBucket: s3.IBucket;
 
-  constructor(scope: Construct, id: string, props: { siteBucket: s3.IBucket; imagesBucket: s3.IBucket }) {
+  constructor(scope: Construct, id: string, props: { siteBucket: s3.IBucket; imagesBucket: s3.IBucket; cognitoOrigin: string }) {
     super(scope, id);
     this.siteBucket = props.siteBucket;
 
     const region = cdk.Stack.of(this).region;
     const csp = contentSecurityPolicy([
-      'https://*.amazoncognito.com', // admin sign-in token exchange
-      `https://${props.imagesBucket.bucketRegionalDomainName}`, // admin photo uploads (presigned PUT)
+      props.cognitoOrigin, // admin sign-in token exchange
+      // Admin photo uploads (presigned PUT). The SDK may use either host form depending on region.
+      `https://${props.imagesBucket.bucketName}.s3.${region}.amazonaws.com`,
+      `https://${props.imagesBucket.bucketName}.s3.amazonaws.com`,
       `https://dataplane.rum.${region}.amazonaws.com`, // CloudWatch RUM
       `https://cognito-identity.${region}.amazonaws.com`,
       `https://sts.${region}.amazonaws.com`,

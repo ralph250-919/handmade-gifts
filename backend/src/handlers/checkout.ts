@@ -5,6 +5,7 @@ import * as db from '../lib/db.js';
 import { UserFacingError } from '../lib/errors.js';
 import { httpHandler, json, parseJsonBody } from '../lib/http.js';
 import { countMetric, logger, Metric } from '../lib/observability.js';
+import { safeError } from '../lib/redact.js';
 import { getStripe } from '../lib/stripe.js';
 
 /** POST /api/checkout  { items: [{ productId, quantity }] } -> { url } */
@@ -65,7 +66,7 @@ export const handler = httpHandler(async (event) => {
       // Record the real cause (e.g. a Stripe error) before hiding it behind a friendly message.
       const e = err as Error & { type?: string; code?: string; statusCode?: number; requestId?: string };
       logger.error('Checkout failed', {
-        error: { name: e.name, message: e.message, stack: e.stack },
+        error: safeError(e),
         stripe: e.type ? { type: e.type, code: e.code, statusCode: e.statusCode, requestId: e.requestId } : undefined,
       });
       throw new UserFacingError(502, "We couldn't start checkout right now. Please try again in a minute — your cart is saved.", 'CHECKOUT_UNAVAILABLE');

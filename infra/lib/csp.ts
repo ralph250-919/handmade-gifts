@@ -1,8 +1,9 @@
 /**
  * Content-Security-Policy for the storefront and admin pages. Scripts may only come from this site
  * (plus the pinned CloudWatch RUM client), so an injected <script> or inline handler won't run and
- * can't read the admin sign-in token. The local dev server sends the same policy, so the browser
- * tests catch anything that breaks it.
+ * can't read the admin sign-in token. The local dev server sends the same policy (without the AWS
+ * connect-src hosts), so the browser tests catch blocked scripts, styles and images, but not a
+ * missing production connect-src host: check admin sign-in and photo upload after deploying.
  */
 export function contentSecurityPolicy(extraConnectSrc: string[] = []): string {
   return [

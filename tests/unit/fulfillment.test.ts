@@ -31,13 +31,16 @@ function fakeDeps(initial: Order[] = [order()], stock: Record<string, number | n
     markOrderPaid: vi.fn(async (id: string, fields: Partial<Order>, issueFor: (item: OrderItem) => string) => {
       const o = orders.get(id);
       if (!o || o.status !== 'PENDING') return undefined;
-      const stockConflicts = o.items.filter((i) => {
-        const left = stockLeft.get(i.productId);
-        return left === undefined || (left !== null && left < i.quantity);
-      });
-      for (const i of o.items) {
-        const left = stockLeft.get(i.productId);
-        if (typeof left === 'number' && !stockConflicts.includes(i)) stockLeft.set(i.productId, left - i.quantity);
+      const need = new Map<string, number>();
+      for (const i of o.items) need.set(i.productId, (need.get(i.productId) ?? 0) + i.quantity);
+      const short = (pid: string) => {
+        const left = stockLeft.get(pid);
+        return left === undefined || (left !== null && left < need.get(pid)!);
+      };
+      const stockConflicts = o.items.filter((i) => short(i.productId));
+      for (const [pid, q] of need) {
+        const left = stockLeft.get(pid);
+        if (typeof left === 'number' && !short(pid)) stockLeft.set(pid, left - q);
       }
       Object.assign(o, fields, { status: 'PAID' });
       if (stockConflicts.length) o.issues = [...(o.issues ?? []), ...stockConflicts.map(issueFor)];

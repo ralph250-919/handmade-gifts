@@ -161,7 +161,9 @@ export async function markOrderPaid(
   // Products that are gone, or that turn out not to have enough stock, become order issues.
   const conflicts = new Set(order.items.filter((i) => !products.has(i.productId)).map((i) => i.productId));
 
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // Each attempt can discover more sold-out products, so allow one attempt per product plus a few for conflicts.
+  const maxAttempts = new Set(order.items.map((i) => i.productId)).size + 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const take = new Map<string, number>();
     for (const item of order.items) {
       const product = products.get(item.productId);
@@ -201,12 +203,14 @@ export async function markOrderPaid(
           ],
         }),
       );
-      return { order: { ...order, ...set } as Order, stockConflicts };
+      const written = Object.fromEntries(Object.entries(set).filter(([, v]) => v !== undefined));
+      return { order: { ...order, ...written } as Order, stockConflicts };
     } catch (err) {
       if ((err as { name?: string }).name !== 'TransactionCanceledException') throw err;
       const reasons = ((err as { CancellationReasons?: CancellationReason[] }).CancellationReasons ?? []);
       if (reasons[0]?.Code === 'ConditionalCheckFailed') return undefined; // someone else already processed it
-      let retry = reasons.some((r) => r.Code === 'TransactionConflict');
+      const conflict = reasons.some((r) => r.Code === 'TransactionConflict');
+      let retry = conflict;
       reasons.slice(1).forEach((r, i) => {
         if (r.Code === 'ConditionalCheckFailed') {
           conflicts.add(stockIds[i]!); // not enough stock: record an issue instead and try again
@@ -214,6 +218,8 @@ export async function markOrderPaid(
         }
       });
       if (!retry) throw err;
+      // Another checkout touched the same product at the same moment: wait briefly before trying again.
+      if (conflict) await new Promise((r) => setTimeout(r, (attempt + 1) * 25 + Math.random() * 50));
     }
   }
   throw new Error(`Could not record payment for order ${id} after several attempts`);

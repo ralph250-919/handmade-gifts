@@ -89,6 +89,60 @@ describe('markOrderPaid (DynamoDB transaction)', () => {
     expect((store.transactCalls[0] as Tx).TransactItems).toHaveLength(1);
   });
 
+  it('flags the right product when one of several runs out', async () => {
+    store.orders.set('cs_test_123', order({
+      items: [
+        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 2 },
+        { productId: 'p2', name: 'Candle', unitPriceCents: 1800, quantity: 1 },
+      ],
+    }));
+    store.products.set('p2', product({ id: 'p2', name: 'Candle', stock: 0 }));
+    store.transactResults = [{ reasons: ['None', 'None', 'ConditionalCheckFailed'] }, 'ok'];
+    const res = await markOrderPaid('cs_test_123', {}, issueFor);
+    expect(res?.stockConflicts.map((i) => i.productId)).toEqual(['p2']);
+    expect(res?.order.issues).toEqual(['short: Candle']);
+    const retry = (store.transactCalls[1] as Tx).TransactItems;
+    expect(retry.map((i) => i.Update.Key.id)).toEqual(['cs_test_123', 'p1']);
+  });
+
+  it('adds up repeated lines for the same product into one stock update', async () => {
+    store.orders.set('cs_test_123', order({
+      items: [
+        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 2 },
+        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 1 },
+      ],
+    }));
+    await markOrderPaid('cs_test_123', {}, issueFor);
+    const items = (store.transactCalls[0] as Tx).TransactItems;
+    expect(items).toHaveLength(2);
+    expect(items[1]!.Update.ExpressionAttributeValues[':q']).toBe(3);
+  });
+
+  it('records an issue for a product that was deleted', async () => {
+    store.products.clear();
+    const res = await markOrderPaid('cs_test_123', {}, issueFor);
+    expect(res?.order.issues).toEqual(['short: Speckled Mug']);
+    expect((store.transactCalls[0] as Tx).TransactItems).toHaveLength(1);
+  });
+
+  it('retries when another checkout touches the same product at the same moment', async () => {
+    store.transactResults = [{ reasons: ['None', 'TransactionConflict'] }, 'ok'];
+    const res = await markOrderPaid('cs_test_123', {}, issueFor);
+    expect(res?.stockConflicts).toEqual([]);
+    expect(store.transactCalls).toHaveLength(2);
+  });
+
+  it('gives up with an error (so Stripe retries later) after repeated conflicts', async () => {
+    store.transactResults = Array.from({ length: 10 }, () => ({ reasons: ['None', 'TransactionConflict'] }));
+    await expect(markOrderPaid('cs_test_123', {}, issueFor)).rejects.toThrow('after several attempts');
+  });
+
+  it('does not overwrite stored fields with missing values in the returned order', async () => {
+    store.orders.set('cs_test_123', order({ shippingCents: 600 }));
+    const res = await markOrderPaid('cs_test_123', { shippingCents: undefined, totalCents: 7000 }, issueFor);
+    expect(res?.order).toMatchObject({ shippingCents: 600, totalCents: 7000 });
+  });
+
   it('lets other errors propagate so Stripe retries the webhook', async () => {
     store.transactResults = [{ reasons: ['None', 'ThrottlingError'] }];
     await expect(markOrderPaid('cs_test_123', {}, issueFor)).rejects.toThrow('Transaction cancelled');

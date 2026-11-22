@@ -107,6 +107,11 @@ After the first deploy:
    ```
 5. Sign in at `AdminUrl`, add products and photos, and tick **Visible in shop**. The first time you sign in you set a new password and then scan a QR code with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password and similar). After that, every sign-in asks for your password and a 6-digit code from the app.
 
+   **Lost your phone or authenticator app?** Reset it from AWS CloudShell. Find the user pool ID under Cognito → User pools in the AWS Console, then run the command below with your admin email. On your next sign-in you'll be asked to scan a new QR code.
+   ```bash
+   aws cognito-idp admin-set-user-mfa-preference --user-pool-id <UserPoolId> --username <your admin email> --software-token-mfa-settings Enabled=false,PreferredMfa=false
+   ```
+
    The admin sign-in only works from the shop's own address. To test the local dev page against a real deployment, deploy once with `-c allowLocalDevLogin=true` and remove it again afterwards: while it's on, a malicious page on `localhost:5173` could obtain an admin sign-in.
 6. **Run a test purchase** with card `4242 4242 4242 4242`, any future date and any CVC. The order appears in Admin → Orders → *To ship*, and you and the customer both get emails.
 
