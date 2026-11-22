@@ -128,13 +128,17 @@ New AWS accounts can only email *verified* addresses. Before going live, open SE
 
 **Admin (`/admin/`)**
 - **Orders → To ship:** shows each paid order's items, customer and shipping address. Enter tracking details, then click **Mark shipped & email customer**.
-- **⚠ warnings on an order:** something needs your attention. For example, two people bought the last item at the same moment. Contact the customer.
+- **⚠ warnings on an order:** something needs your attention. Contact the customer.
 - **Products:** add or edit items, upload photos (the first photo is the main one) and set stock.
   - Leave **Stock** blank for *made to order* items, which have no limit.
+  - Stock is held for a customer from the moment they start checkout. If they don't pay within about 30 minutes, the checkout expires and the stock goes back on sale.
+  - If someone buys the item while you're editing it, saving a new stock number is refused with a message showing the new stock, so you don't overwrite the sale. Check the number and save again. Edits that don't touch stock save normally.
   - Untick **Visible** to hide a product without deleting it.
   - The storefront updates within about a minute.
 
 **Pricing safety:** the browser never decides prices. At checkout the server reloads every product from the database, checks stock and builds the Stripe session itself.
+
+**No overselling:** stock is reserved in the same database write that records the order, so two people can't both pay for the last item. The second one is told it just sold out before they reach the payment page.
 
 ---
 
@@ -161,7 +165,7 @@ When a customer hits an error, the message includes a **reference** (the request
 | **CheckoutFailures** | 3+ customers in 15 minutes couldn't start checkout. | Run the "Shop errors" query filtered to `route = "POST /api/checkout"`. Common causes are an invalid or rotated Stripe key, a Stripe outage (https://status.stripe.com) or an unsupported country or currency. Customers' carts are saved, so they can retry. |
 | **WebhookFailures** | Stripe's payment notifications are failing, so paid orders may stay "Abandoned/in checkout". | Stripe Dashboard → Webhooks → your endpoint → failed deliveries. `Invalid signature` means the `STRIPE_WEBHOOK_SECRET` is wrong, often because test and live are mixed up. Stripe retries for 3 days, so once fixed, click **Resend** on failed events. |
 | **OrderEmailFailures** | An order or shipping email wasn't sent. | Usually the SES sandbox or an unverified sender. The order is still saved, so email the customer manually from the admin. |
-| **StockConflict** | An item sold more times than you had in stock. | The order shows a ⚠ warning in admin. Contact the customer about timing or a refund (refunds are made in the Stripe Dashboard). |
+| **StockConflict** | An item sold more times than you had in stock. This can only happen for checkouts started before stock reservation was deployed. | The order shows a ⚠ warning in admin. Contact the customer about timing or a refund (refunds are made in the Stripe Dashboard). |
 | **Api5xx / *Function*Errors** | Server errors. | "Shop errors" query. If it started right after a deploy, roll back by redeploying the previous commit. |
 | **ApiSlow** | p95 latency over 2 s for 15 minutes. | "Slow or failed API requests" query and the X-Ray trace map. Usually a slow dependency, such as Stripe. |
 | **BrowserErrors** | Shoppers are hitting JavaScript errors. | CloudWatch RUM → Errors shows the message, page and browser. |

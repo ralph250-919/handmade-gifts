@@ -15,6 +15,13 @@ export const handler = httpHandler(async (event) => {
       {
         getProductsByIds: db.getProductsByIds,
         createPendingOrder: db.createPendingOrder,
+        async expireSession(id) {
+          try {
+            await (await getStripe()).checkout.sessions.expire(id);
+          } catch (err) {
+            logger.warn('Could not expire unused checkout session', { orderId: id, error: (err as Error).message });
+          }
+        },
         async createSession(req) {
           const stripe = await getStripe();
           const session = await stripe.checkout.sessions.create({
@@ -42,6 +49,7 @@ export const handler = httpHandler(async (event) => {
             phone_number_collection: { enabled: false },
             success_url: req.successUrl,
             cancel_url: req.cancelUrl,
+            expires_at: req.expiresAt,
           });
           if (!session.url) throw new Error('Stripe did not return a checkout URL');
           return { id: session.id, url: session.url };

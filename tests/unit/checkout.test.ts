@@ -14,7 +14,8 @@ function deps(overrides: Partial<CheckoutDeps> = {}): CheckoutDeps {
   return {
     getProductsByIds: vi.fn(async () => new Map([['p1', product()]])),
     createSession: vi.fn(async () => ({ id: 'cs_test_abc', url: 'https://checkout.stripe.com/c/pay/cs_test_abc' })),
-    createPendingOrder: vi.fn(async () => {}),
+    createPendingOrder: vi.fn(async (): Promise<string | undefined> => undefined),
+    expireSession: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -35,8 +36,46 @@ describe('startCheckout', () => {
       }),
     );
     expect(d.createPendingOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'cs_test_abc', status: 'PENDING', subtotalCents: 6400, shippingCents: 600 }),
+      expect.objectContaining({
+        id: 'cs_test_abc',
+        status: 'PENDING',
+        subtotalCents: 6400,
+        shippingCents: 600,
+        reservedStock: [{ productId: 'p1', quantity: 2 }],
+      }),
     );
+    expect(d.expireSession).not.toHaveBeenCalled();
+  });
+
+  it('expires the session about 30 minutes out so reserved stock is not held for long', async () => {
+    const d = deps();
+    const before = Math.floor(Date.now() / 1000);
+    await startCheckout(d, { items: [{ productId: 'p1', quantity: 1 }] }, settings);
+    const { expiresAt } = vi.mocked(d.createSession).mock.calls[0]![0];
+    expect(expiresAt - before).toBeGreaterThanOrEqual(30 * 60);
+    expect(expiresAt - before).toBeLessThanOrEqual(32 * 60);
+  });
+
+  it('does not reserve stock for made-to-order items', async () => {
+    const d = deps({ getProductsByIds: vi.fn(async () => new Map([['p1', product({ stock: null })]])) });
+    await startCheckout(d, { items: [{ productId: 'p1', quantity: 2 }] }, settings);
+    expect(d.createPendingOrder).toHaveBeenCalledWith(expect.objectContaining({ reservedStock: [] }));
+  });
+
+  it('rejects the checkout and cancels the session when someone else just took the stock', async () => {
+    const d = deps({ createPendingOrder: vi.fn(async () => 'p1') });
+    await expect(startCheckout(d, { items: [{ productId: 'p1', quantity: 2 }] }, settings)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'OUT_OF_STOCK',
+      message: expect.stringContaining('Speckled Mug'),
+    });
+    expect(d.expireSession).toHaveBeenCalledWith('cs_test_abc');
+  });
+
+  it('cancels the session if the order cannot be saved', async () => {
+    const d = deps({ createPendingOrder: vi.fn(async () => Promise.reject(new Error('DynamoDB down'))) });
+    await expect(startCheckout(d, { items: [{ productId: 'p1', quantity: 1 }] }, settings)).rejects.toThrow('DynamoDB down');
+    expect(d.expireSession).toHaveBeenCalledWith('cs_test_abc');
   });
 
   it('gives free shipping over the threshold', async () => {

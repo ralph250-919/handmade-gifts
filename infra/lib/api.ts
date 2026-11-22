@@ -83,7 +83,7 @@ export class Api extends Construct {
     storage.productsTable.grantReadData(products);
     storage.productsTable.grantReadData(feed);
     storage.productsTable.grantReadData(health);
-    storage.productsTable.grantReadData(checkout);
+    storage.productsTable.grantReadWriteData(checkout); // reserves stock
     storage.ordersTable.grantWriteData(checkout);
     storage.productsTable.grantReadWriteData(webhook);
     storage.ordersTable.grantReadWriteData(webhook);
