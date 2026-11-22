@@ -14,11 +14,9 @@ vi.mock('@aws-sdk/lib-dynamodb', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/lib-dynamodb')>();
   const send = async (cmd: { constructor: { name: string }; input: any }) => {
     switch (cmd.constructor.name) {
-      case 'GetCommand':
-        return { Item: store.orders.get(cmd.input.Key.id) };
-      case 'BatchGetCommand': {
-        const [table, req] = Object.entries(cmd.input.RequestItems as Record<string, { Keys: { id: string }[] }>)[0]!;
-        return { Responses: { [table]: req.Keys.map((k) => store.products.get(k.id)).filter(Boolean) } };
+      case 'GetCommand': {
+        const table = cmd.input.TableName === 'orders' ? store.orders : store.products;
+        return { Item: structuredClone(table.get(cmd.input.Key.id)) };
       }
       case 'TransactWriteCommand': {
         store.transactCalls.push(cmd.input);
@@ -38,113 +36,94 @@ vi.mock('@aws-sdk/lib-dynamodb', async (importOriginal) => {
 
 process.env.PRODUCTS_TABLE = 'products';
 process.env.ORDERS_TABLE = 'orders';
-const { markOrderPaid } = await import('../../backend/src/lib/db.js');
-const issueFor = (i: { name: string }) => `short: ${i.name}`;
+const { createPendingOrder, transitionOrderWithStock } = await import('../../backend/src/lib/db.js');
 
-type Tx = { TransactItems: { Update: { TableName: string; Key: { id: string }; ExpressionAttributeValues: Record<string, unknown> } }[] };
+type Item = {
+  Put?: { TableName: string; ConditionExpression: string };
+  Update?: { TableName: string; Key: { id: string }; UpdateExpression: string; ConditionExpression: string; ExpressionAttributeValues: Record<string, unknown> };
+};
+const items = (call: number) => (store.transactCalls[call] as { TransactItems: Item[] }).TransactItems;
 
 beforeEach(() => {
   store.orders.clear();
   store.products.clear();
   store.transactResults = [];
   store.transactCalls = [];
-  store.orders.set('cs_test_123', order());
+  store.orders.set('cs_test_123', order({ reservedStock: [{ productId: 'p1', quantity: 2 }] }));
   store.products.set('p1', product());
 });
 
-describe('markOrderPaid (DynamoDB transaction)', () => {
-  it('marks the order paid and takes stock in a single transaction', async () => {
-    const res = await markOrderPaid('cs_test_123', { totalCents: 7000 }, issueFor);
-    expect(res?.order).toMatchObject({ status: 'PAID', totalCents: 7000 });
-    expect(res?.stockConflicts).toEqual([]);
-    expect(store.transactCalls).toHaveLength(1);
-    const items = (store.transactCalls[0] as Tx).TransactItems;
-    expect(items.map((i) => i.Update.TableName)).toEqual(['orders', 'products']);
-    expect(items[1]!.Update.ExpressionAttributeValues[':q']).toBe(2);
+describe('createPendingOrder (stock reservation)', () => {
+  const pending = (o: Partial<Order> = {}) => order({ reservedStock: [{ productId: 'p1', quantity: 2 }], ...o });
+
+  it('saves the order and takes the reserved stock in one transaction', async () => {
+    expect(await createPendingOrder(pending())).toBeUndefined();
+    const [put, take] = items(0);
+    expect(put!.Put).toMatchObject({ TableName: 'orders', ConditionExpression: 'attribute_not_exists(id)' });
+    expect(take!.Update).toMatchObject({ TableName: 'products', Key: { id: 'p1' }, ConditionExpression: 'attribute_exists(id) AND stock >= :q' });
+    expect(take!.Update!.UpdateExpression).toContain('stock - :q');
+    expect(take!.Update!.ExpressionAttributeValues[':q']).toBe(2);
   });
 
-  it('returns undefined for an order that is already paid', async () => {
-    store.orders.set('cs_test_123', order({ status: 'PAID' }));
-    expect(await markOrderPaid('cs_test_123', {}, issueFor)).toBeUndefined();
-    expect(store.transactCalls).toHaveLength(0);
+  it('returns the product that ran out, writing nothing', async () => {
+    store.transactResults = [{ reasons: ['None', 'ConditionalCheckFailed'] }];
+    expect(await createPendingOrder(pending())).toBe('p1');
   });
 
-  it('returns undefined when another delivery wins the race', async () => {
-    store.transactResults = [{ reasons: ['ConditionalCheckFailed', 'None'] }];
-    expect(await markOrderPaid('cs_test_123', {}, issueFor)).toBeUndefined();
-  });
-
-  it('records a stock issue instead of failing when stock ran out', async () => {
-    store.transactResults = [{ reasons: ['None', 'ConditionalCheckFailed'] }, 'ok'];
-    const res = await markOrderPaid('cs_test_123', {}, issueFor);
-    expect(res?.stockConflicts.map((i) => i.productId)).toEqual(['p1']);
-    expect(res?.order.issues).toEqual(['short: Speckled Mug']);
-    const retry = (store.transactCalls[1] as Tx).TransactItems;
-    expect(retry).toHaveLength(1); // only the order update; the short product is no longer decremented
-  });
-
-  it('does not touch stock for made-to-order products', async () => {
-    store.products.set('p1', product({ stock: null }));
-    await markOrderPaid('cs_test_123', {}, issueFor);
-    expect((store.transactCalls[0] as Tx).TransactItems).toHaveLength(1);
-  });
-
-  it('flags the right product when one of several runs out', async () => {
-    store.orders.set('cs_test_123', order({
-      items: [
-        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 2 },
-        { productId: 'p2', name: 'Candle', unitPriceCents: 1800, quantity: 1 },
-      ],
-    }));
-    store.products.set('p2', product({ id: 'p2', name: 'Candle', stock: 0 }));
-    store.transactResults = [{ reasons: ['None', 'None', 'ConditionalCheckFailed'] }, 'ok'];
-    const res = await markOrderPaid('cs_test_123', {}, issueFor);
-    expect(res?.stockConflicts.map((i) => i.productId)).toEqual(['p2']);
-    expect(res?.order.issues).toEqual(['short: Candle']);
-    const retry = (store.transactCalls[1] as Tx).TransactItems;
-    expect(retry.map((i) => i.Update.Key.id)).toEqual(['cs_test_123', 'p1']);
-  });
-
-  it('adds up repeated lines for the same product into one stock update', async () => {
-    store.orders.set('cs_test_123', order({
-      items: [
-        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 2 },
-        { productId: 'p1', name: 'Speckled Mug', unitPriceCents: 3200, quantity: 1 },
-      ],
-    }));
-    await markOrderPaid('cs_test_123', {}, issueFor);
-    const items = (store.transactCalls[0] as Tx).TransactItems;
-    expect(items).toHaveLength(2);
-    expect(items[1]!.Update.ExpressionAttributeValues[':q']).toBe(3);
-  });
-
-  it('records an issue for a product that was deleted', async () => {
-    store.products.clear();
-    const res = await markOrderPaid('cs_test_123', {}, issueFor);
-    expect(res?.order.issues).toEqual(['short: Speckled Mug']);
-    expect((store.transactCalls[0] as Tx).TransactItems).toHaveLength(1);
-  });
-
-  it('retries when another checkout touches the same product at the same moment', async () => {
+  it('retries briefly when another checkout touches the same product at the same moment', async () => {
     store.transactResults = [{ reasons: ['None', 'TransactionConflict'] }, 'ok'];
-    const res = await markOrderPaid('cs_test_123', {}, issueFor);
-    expect(res?.stockConflicts).toEqual([]);
+    expect(await createPendingOrder(pending())).toBeUndefined();
     expect(store.transactCalls).toHaveLength(2);
   });
 
-  it('gives up with an error (so Stripe retries later) after repeated conflicts', async () => {
-    store.transactResults = Array.from({ length: 10 }, () => ({ reasons: ['None', 'TransactionConflict'] }));
-    await expect(markOrderPaid('cs_test_123', {}, issueFor)).rejects.toThrow('after several attempts');
+  it('gives up after a few conflicts instead of retrying forever', async () => {
+    store.transactResults = Array(10).fill({ reasons: ['None', 'TransactionConflict'] });
+    await expect(createPendingOrder(pending())).rejects.toThrow('Transaction cancelled');
+    expect(store.transactCalls).toHaveLength(5);
+  });
+});
+
+describe('transitionOrderWithStock', () => {
+  it('changes the order and the stock in one transaction and returns the stored order', async () => {
+    const res = await transitionOrderWithStock('cs_test_123', ['PENDING'], 'EXPIRED', {}, [{ productId: 'p1', delta: 2 }]);
+    expect(res?.shortfalls).toEqual([]);
+    const [orderUpdate, release] = items(0);
+    expect(orderUpdate!.Update!.TableName).toBe('orders');
+    expect(orderUpdate!.Update!.ConditionExpression).toContain('#status IN (:from0)');
+    expect(release!.Update!.UpdateExpression).toContain('stock + :q');
+    expect(release!.Update!.ConditionExpression).toContain('attribute_type(stock, :num)');
   });
 
-  it('does not overwrite stored fields with missing values in the returned order', async () => {
-    store.orders.set('cs_test_123', order({ shippingCents: 600 }));
-    const res = await markOrderPaid('cs_test_123', { shippingCents: undefined, totalCents: 7000 }, issueFor);
-    expect(res?.order).toMatchObject({ shippingCents: 600, totalCents: 7000 });
+  it('returns undefined when the order is not in the expected state (duplicate delivery)', async () => {
+    store.transactResults = [{ reasons: ['ConditionalCheckFailed', 'None'] }];
+    expect(await transitionOrderWithStock('cs_test_123', ['PENDING'], 'PAID', {}, [{ productId: 'p1', delta: -2 }])).toBeUndefined();
   });
 
-  it('lets other errors propagate so Stripe retries the webhook', async () => {
-    store.transactResults = [{ reasons: ['None', 'ThrottlingError'] }];
-    await expect(markOrderPaid('cs_test_123', {}, issueFor)).rejects.toThrow('Transaction cancelled');
+  it('records a shortfall as an order issue when there is not enough stock', async () => {
+    store.products.set('p1', product({ stock: 1 }));
+    store.transactResults = [{ reasons: ['None', 'ConditionalCheckFailed'] }, 'ok'];
+    const res = await transitionOrderWithStock('cs_test_123', ['PENDING'], 'PAID', {}, [{ productId: 'p1', delta: -2, shortfallIssue: 'short: mug' }]);
+    expect(res?.shortfalls).toEqual(['p1']);
+    const retry = items(1);
+    expect(retry).toHaveLength(1); // the stock change is dropped...
+    expect(retry[0]!.Update!.ExpressionAttributeValues[':issues']).toEqual(['short: mug']); // ...and noted on the order
+  });
+
+  it('silently skips products that were deleted or are made to order', async () => {
+    store.products.set('p1', product({ stock: null }));
+    store.transactResults = [{ reasons: ['None', 'ConditionalCheckFailed'] }, 'ok'];
+    const res = await transitionOrderWithStock('cs_test_123', ['PENDING'], 'PAID', {}, [{ productId: 'p1', delta: -2, shortfallIssue: 'short' }]);
+    expect(res?.shortfalls).toEqual([]);
+    expect(items(1)[0]!.Update!.ExpressionAttributeValues[':issues']).toBeUndefined();
+  });
+
+  it('retries on a write conflict, then gives up so Stripe can retry later', async () => {
+    store.transactResults = [{ reasons: ['TransactionConflict', 'None'] }, 'ok'];
+    expect(await transitionOrderWithStock('cs_test_123', ['PENDING'], 'PAID', {}, [])).toBeDefined();
+
+    store.transactCalls = [];
+    store.transactResults = Array(10).fill({ reasons: ['TransactionConflict'] });
+    await expect(transitionOrderWithStock('cs_test_123', ['PENDING'], 'PAID', {}, [])).rejects.toThrow('Transaction cancelled');
+    expect(store.transactCalls).toHaveLength(5);
   });
 });

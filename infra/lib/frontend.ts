@@ -64,8 +64,10 @@ export class Frontend extends Construct {
           responseHeadersPolicy: securityHeaders,
         },
       },
-      // S3 answers 403 for missing files when the bucket is private, so treat both as "page not found".
-      errorResponses: [403, 404].map((httpStatus) => ({ httpStatus, responseHttpStatus: 404, responsePagePath: '/404.html', ttl: cdk.Duration.minutes(5) })),
+      // The private buckets answer 403 for a missing file, so show the "page not found" page for it.
+      // This applies to every path, including /api/*, so only 403 is mapped: the API's own 404s
+      // (e.g. "Product not found") must reach the browser as JSON. The API never sends 403 itself.
+      errorResponses: [{ httpStatus: 403, responseHttpStatus: 404, responsePagePath: '/404.html', ttl: cdk.Duration.minutes(5) }],
     });
   }
 

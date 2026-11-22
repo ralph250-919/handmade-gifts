@@ -9,11 +9,11 @@ import {
   ScanCommand,
   TransactWriteCommand,
   UpdateCommand,
+  type UpdateCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 import { env } from './config.js';
 import { tracer } from './observability.js';
-import type { PaidOrder } from './fulfillment.js';
-import type { Order, OrderItem, OrderStatus, Product } from './types.js';
+import type { Order, OrderStatus, Product, StockChange } from './types.js';
 
 const doc = DynamoDBDocumentClient.from(tracer.captureAWSv3Client(new DynamoDBClient({})), {
   marshallOptions: { removeUndefinedValues: true },
@@ -24,6 +24,30 @@ const ordersTable = () => env('ORDERS_TABLE');
 
 function isConditionFailure(err: unknown): boolean {
   return (err as { name?: string })?.name === 'ConditionalCheckFailedException';
+}
+
+/** For a cancelled transaction: one reason per item, in order ('ConditionalCheckFailed', 'None', ...). */
+function cancellationCodes(err: unknown): (string | undefined)[] | undefined {
+  const e = err as { name?: string; CancellationReasons?: { Code?: string }[] };
+  return e?.name === 'TransactionCanceledException' ? (e.CancellationReasons ?? []).map((r) => r.Code) : undefined;
+}
+
+/** Waits a little before retrying a transaction that collided with another write to the same item. */
+const conflictBackoff = (attempt: number) => new Promise((r) => setTimeout(r, (attempt + 1) * 25 + Math.random() * 50));
+const CONFLICT_RETRIES = 4;
+
+/** A transaction item that changes a product's stock, only if the product exists and tracks stock (and has enough). */
+function stockUpdate(change: StockChange, now: string) {
+  const take = change.delta < 0;
+  return {
+    Update: {
+      TableName: productsTable(),
+      Key: { id: change.productId },
+      UpdateExpression: `SET stock = stock ${take ? '-' : '+'} :q, updatedAt = :now`,
+      ConditionExpression: take ? 'attribute_exists(id) AND stock >= :q' : 'attribute_exists(id) AND attribute_type(stock, :num)',
+      ExpressionAttributeValues: { ':q': Math.abs(change.delta), ':now': now, ...(take ? {} : { ':num': 'N' }) },
+    },
+  };
 }
 
 // ---------- Products ----------
@@ -78,16 +102,63 @@ export async function putProduct(product: Product): Promise<void> {
   await doc.send(new PutCommand({ TableName: productsTable(), Item: product }));
 }
 
+/**
+ * Saves a product only if nobody changed it since it was read (optimistic locking on updatedAt).
+ * Checkouts change stock and updatedAt, so this stops an admin edit from overwriting a sale.
+ */
+export async function putProductIfUnchanged(product: Product, expectedUpdatedAt: string): Promise<boolean> {
+  try {
+    await doc.send(
+      new PutCommand({
+        TableName: productsTable(),
+        Item: product,
+        ConditionExpression: 'updatedAt = :u',
+        ExpressionAttributeValues: { ':u': expectedUpdatedAt },
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
 export async function deleteProduct(id: string): Promise<void> {
   await doc.send(new DeleteCommand({ TableName: productsTable(), Key: { id } }));
 }
 
 // ---------- Orders ----------
 
-export async function createPendingOrder(order: Order): Promise<void> {
-  await doc.send(
-    new PutCommand({ TableName: ordersTable(), Item: order, ConditionExpression: 'attribute_not_exists(id)' }),
-  );
+/**
+ * Records a PENDING order and takes its `reservedStock` off the products, all in one transaction.
+ * Returns the id of a product that no longer has enough stock (nothing is written), or undefined on success.
+ */
+export async function createPendingOrder(order: Order): Promise<string | undefined> {
+  const reserve = order.reservedStock ?? [];
+  for (let attempt = 0; ; attempt++) {
+    const now = new Date().toISOString();
+    try {
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            { Put: { TableName: ordersTable(), Item: order, ConditionExpression: 'attribute_not_exists(id)' } },
+            ...reserve.map((r) => stockUpdate({ productId: r.productId, delta: -r.quantity }, now)),
+          ],
+        }),
+      );
+      return undefined;
+    } catch (err) {
+      const codes = cancellationCodes(err);
+      const failed = codes?.findIndex((c, i) => i > 0 && c === 'ConditionalCheckFailed') ?? -1;
+      if (failed > 0) return reserve[failed - 1]!.productId;
+      // Another checkout touched the same product at the same moment: try again shortly.
+      if (codes?.includes('TransactionConflict') && attempt < CONFLICT_RETRIES) {
+        await conflictBackoff(attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 export async function getOrder(id: string): Promise<Order | undefined> {
@@ -95,18 +166,34 @@ export async function getOrder(id: string): Promise<Order | undefined> {
   return res.Item as Order | undefined;
 }
 
-/** Builds `SET #f0 = :v0, ...` for the given fields (undefined values and the key are skipped). */
-function setExpression(fields: Record<string, unknown>) {
-  const names: Record<string, string> = {};
+function orderTransition(id: string, from: OrderStatus[], to: OrderStatus, fields: Partial<Order>, appendIssues: string[] = []) {
+  const set: Record<string, unknown> = { ...fields, status: to, updatedAt: new Date().toISOString() };
+  delete set.id;
+  delete set.issues;
+  const names: Record<string, string> = { '#status': 'status' };
   const values: Record<string, unknown> = {};
-  const parts = Object.entries(fields)
-    .filter(([k, v]) => k !== 'id' && v !== undefined)
+  const parts = Object.entries(set)
+    .filter(([, v]) => v !== undefined)
     .map(([k, v], i) => {
       names[`#f${i}`] = k;
       values[`:v${i}`] = v;
       return `#f${i} = :v${i}`;
     });
-  return { expression: `SET ${parts.join(', ')}`, names, values };
+  if (appendIssues.length) {
+    names['#issues'] = 'issues';
+    values[':issues'] = appendIssues;
+    values[':empty'] = [];
+    parts.push('#issues = list_append(if_not_exists(#issues, :empty), :issues)');
+  }
+  from.forEach((s, i) => (values[`:from${i}`] = s));
+  return {
+    TableName: ordersTable(),
+    Key: { id },
+    UpdateExpression: `SET ${parts.join(', ')}`,
+    ConditionExpression: `attribute_exists(id) AND #status IN (${from.map((_, i) => `:from${i}`).join(', ')})`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  } satisfies UpdateCommandInput;
 }
 
 /**
@@ -120,20 +207,8 @@ export async function transitionOrder(
   to: OrderStatus,
   fields: Partial<Order> = {},
 ): Promise<Order | undefined> {
-  const { expression, names, values } = setExpression({ ...fields, status: to, updatedAt: new Date().toISOString() });
-  from.forEach((s, i) => (values[`:from${i}`] = s));
   try {
-    const res = await doc.send(
-      new UpdateCommand({
-        TableName: ordersTable(),
-        Key: { id },
-        UpdateExpression: expression,
-        ConditionExpression: `attribute_exists(id) AND #status IN (${from.map((_, i) => `:from${i}`).join(', ')})`,
-        ExpressionAttributeNames: { ...names, '#status': 'status' },
-        ExpressionAttributeValues: values,
-        ReturnValues: 'ALL_NEW',
-      }),
-    );
+    const res = await doc.send(new UpdateCommand({ ...orderTransition(id, from, to, fields), ReturnValues: 'ALL_NEW' }));
     return res.Attributes as Order;
   } catch (err) {
     if (isConditionFailure(err)) return undefined;
@@ -141,88 +216,73 @@ export async function transitionOrder(
   }
 }
 
-type CancellationReason = { Code?: string };
-
 /**
- * Records a payment in ONE DynamoDB transaction: order PENDING -> PAID, stock taken off every
- * stock-tracked product, and an issue noted on the order for each item that couldn't be taken.
- * Either all of it is written or none of it, so a failure part-way leaves the order PENDING and the
- * next Stripe retry starts again cleanly (no lost stock decrements, no double decrements).
- * Returns undefined when the order isn't PENDING (a duplicate delivery, or an unknown order).
+ * Like transitionOrder, but also applies stock changes in the same DynamoDB transaction,
+ * so the order's state and the products' stock can never get out of step.
+ *
+ * Stock changes for products that were deleted or no longer track stock are skipped.
+ * A product without enough stock for a negative change is skipped too: its id is
+ * returned in `shortfalls` and its `shortfallIssue` is recorded on the order.
+ * Returns undefined if the order is not in one of `from`.
  */
-export async function markOrderPaid(
+export async function transitionOrderWithStock(
   id: string,
-  fields: Partial<Order>,
-  issueFor: (item: OrderItem) => string,
-): Promise<PaidOrder | undefined> {
-  const order = await getOrder(id);
-  if (!order || order.status !== 'PENDING') return undefined;
-  const products = await getProductsByIds(order.items.map((i) => i.productId));
-  // Products that are gone, or that turn out not to have enough stock, become order issues.
-  const conflicts = new Set(order.items.filter((i) => !products.has(i.productId)).map((i) => i.productId));
-
-  // Each attempt can discover more sold-out products, so allow one attempt per product plus a few for conflicts.
-  const maxAttempts = new Set(order.items.map((i) => i.productId)).size + 4;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const take = new Map<string, number>();
-    for (const item of order.items) {
-      const product = products.get(item.productId);
-      if (!product || product.stock === null || conflicts.has(item.productId)) continue; // null = made to order
-      take.set(item.productId, (take.get(item.productId) ?? 0) + item.quantity);
-    }
-    const stockConflicts = order.items.filter((i) => conflicts.has(i.productId));
-    const now = new Date().toISOString();
-    const set: Partial<Order> = { ...fields, status: 'PAID', updatedAt: now };
-    if (stockConflicts.length) set.issues = [...(order.issues ?? []), ...stockConflicts.map(issueFor)];
-    const { expression, names, values } = setExpression(set);
-    const stockIds = [...take.keys()];
-
+  from: OrderStatus[],
+  to: OrderStatus,
+  fields: Partial<Order> = {},
+  stock: StockChange[] = [],
+): Promise<{ order: Order; shortfalls: string[] } | undefined> {
+  let changes = stock.filter((c) => c.delta !== 0);
+  const issues: string[] = [];
+  const shortfalls: string[] = [];
+  // Each stock retry drops at least one change; conflict retries are capped.
+  for (let conflicts = 0; ; ) {
     try {
+      const now = new Date().toISOString();
       await doc.send(
         new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: ordersTable(),
-                Key: { id },
-                UpdateExpression: expression,
-                ConditionExpression: '#status = :pending',
-                ExpressionAttributeNames: { ...names, '#status': 'status' },
-                ExpressionAttributeValues: { ...values, ':pending': 'PENDING' },
-              },
-            },
-            ...stockIds.map((productId) => ({
-              Update: {
-                TableName: productsTable(),
-                Key: { id: productId },
-                UpdateExpression: 'SET stock = stock - :q, updatedAt = :now',
-                ConditionExpression: 'stock >= :q',
-                ExpressionAttributeValues: { ':q': take.get(productId)!, ':now': now },
-              },
-            })),
-          ],
+          TransactItems: [{ Update: orderTransition(id, from, to, fields, issues) }, ...changes.map((c) => stockUpdate(c, now))],
         }),
       );
-      const written = Object.fromEntries(Object.entries(set).filter(([, v]) => v !== undefined));
-      return { order: { ...order, ...written } as Order, stockConflicts };
+      const res = await doc.send(new GetCommand({ TableName: ordersTable(), Key: { id }, ConsistentRead: true }));
+      return { order: res.Item as Order, shortfalls };
     } catch (err) {
-      if ((err as { name?: string }).name !== 'TransactionCanceledException') throw err;
-      const reasons = ((err as { CancellationReasons?: CancellationReason[] }).CancellationReasons ?? []);
-      if (reasons[0]?.Code === 'ConditionalCheckFailed') return undefined; // someone else already processed it
-      const conflict = reasons.some((r) => r.Code === 'TransactionConflict');
-      let retry = conflict;
-      reasons.slice(1).forEach((r, i) => {
-        if (r.Code === 'ConditionalCheckFailed') {
-          conflicts.add(stockIds[i]!); // not enough stock: record an issue instead and try again
-          retry = true;
+      const codes = cancellationCodes(err);
+      if (!codes) throw err;
+      if (codes[0] === 'ConditionalCheckFailed') return undefined;
+      const failed = changes.filter((_, i) => codes[i + 1] === 'ConditionalCheckFailed');
+      if (failed.length === 0) {
+        // Another write touched the same item at the same moment: retry shortly, then give up
+        // (the webhook returns 500 and Stripe retries later).
+        if (codes.includes('TransactionConflict') && conflicts < CONFLICT_RETRIES) {
+          await conflictBackoff(conflicts++);
+          continue;
         }
-      });
-      if (!retry) throw err;
-      // Another checkout touched the same product at the same moment: wait briefly before trying again.
-      if (conflict) await new Promise((r) => setTimeout(r, (attempt + 1) * 25 + Math.random() * 50));
+        throw err;
+      }
+      for (const c of failed) {
+        if (c.delta >= 0) continue;
+        const product = await getProduct(c.productId);
+        if (product && typeof product.stock === 'number') {
+          shortfalls.push(c.productId);
+          if (c.shortfallIssue) issues.push(c.shortfallIssue);
+        }
+      }
+      changes = changes.filter((c) => !failed.includes(c));
     }
   }
-  throw new Error(`Could not record payment for order ${id} after several attempts`);
+}
+
+/** Records that the order emails were sent. */
+export async function markOrderNotified(id: string): Promise<void> {
+  await doc.send(
+    new UpdateCommand({
+      TableName: ordersTable(),
+      Key: { id },
+      UpdateExpression: 'SET notifiedAt = :now',
+      ExpressionAttributeValues: { ':now': new Date().toISOString() },
+    }),
+  );
 }
 
 export async function listOrders(status: OrderStatus, limit = 100): Promise<Order[]> {

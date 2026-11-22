@@ -18,8 +18,16 @@ export const productInput = z.object({
   slug: z.string().trim().max(80).optional(),
 });
 
-function validate(body: unknown) {
-  const r = productInput.safeParse(body);
+/**
+ * Updates also send `baseStock`: the stock shown when the edit form was opened. Checkouts change
+ * stock while the form is open, so stock is only written when the admin actually changed it.
+ */
+export const productUpdateInput = productInput.extend({
+  baseStock: z.number().int().min(0).nullable(),
+});
+
+function validate<T extends z.ZodTypeAny>(body: unknown, schema: T): z.infer<T> {
+  const r = schema.safeParse(body);
   if (!r.success) {
     const issue = r.error.issues[0];
     throw new UserFacingError(400, `${issue?.path.join('.') || 'input'}: ${issue?.message}`, 'INVALID_PRODUCT');
@@ -53,7 +61,7 @@ export const handler = httpHandler(async (event) => {
   }
 
   if (method === 'POST') {
-    const input = validate(parseJsonBody(event));
+    const input = validate(parseJsonBody(event), productInput);
     const now = new Date().toISOString();
     const product: Product = {
       ...input,
@@ -73,16 +81,34 @@ export const handler = httpHandler(async (event) => {
   if (!existing) throw new UserFacingError(404, 'Product not found', 'NOT_FOUND');
 
   if (method === 'PUT') {
-    const input = validate(parseJsonBody(event));
-    const product: Product = {
-      ...existing,
-      ...input,
-      slug: input.slug && input.slug !== existing.slug ? await uniqueSlug(input.slug, id) : existing.slug,
-      updatedAt: new Date().toISOString(),
-    };
-    await db.putProduct(product);
-    logger.info('Product updated', { productId: id, by: who });
-    return json(200, product);
+    const { baseStock, ...input } = validate(parseJsonBody(event), productUpdateInput);
+    const slug = input.slug && input.slug !== existing.slug ? await uniqueSlug(input.slug, id) : existing.slug;
+    const stockEdited = input.stock !== baseStock;
+    // Re-read and retry if a checkout changes the product between our read and our write.
+    let current: Product | undefined = existing;
+    for (let attempt = 0; attempt < 3 && current; attempt++) {
+      if (stockEdited && current.stock !== baseStock) {
+        throw new UserFacingError(
+          409,
+          `The stock of "${current.name}" changed to ${current.stock ?? 'made to order'} while you were editing (probably a sale). Check the stock and save again.`,
+          'STOCK_CHANGED',
+        );
+      }
+      const product: Product = {
+        ...current,
+        ...input,
+        stock: stockEdited ? input.stock : current.stock,
+        slug,
+        updatedAt: new Date().toISOString(),
+      };
+      if (await db.putProductIfUnchanged(product, current.updatedAt)) {
+        logger.info('Product updated', { productId: id, by: who, stockEdited });
+        return json(200, product);
+      }
+      current = await db.getProduct(id);
+    }
+    if (!current) throw new UserFacingError(404, 'Product not found', 'NOT_FOUND');
+    throw new UserFacingError(409, 'This product is being bought right now. Please try saving again.', 'BUSY');
   }
 
   if (method === 'DELETE') {

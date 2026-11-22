@@ -51,8 +51,9 @@ export const handler = httpHandler(async (event) => {
   try {
     const outcome = await handleCheckoutEvent(
       {
-        transitionOrder: db.transitionOrder,
-        markOrderPaid: db.markOrderPaid,
+        getOrder: db.getOrder,
+        transitionOrderWithStock: db.transitionOrderWithStock,
+        markOrderNotified: db.markOrderNotified,
         sendEmail,
         metric: countMetric,
         log: (level, message, extra) => logger[level](message, extra ?? {}),
