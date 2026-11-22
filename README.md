@@ -105,7 +105,9 @@ After the first deploy:
    ```bash
    PRODUCTS_TABLE=<ProductsTable> npm run seed
    ```
-5. Sign in at `AdminUrl`, add products and photos, and tick **Visible in shop**.
+5. Sign in at `AdminUrl`, add products and photos, and tick **Visible in shop**. The first time you sign in you set a new password and then scan a QR code with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password and similar). After that, every sign-in asks for your password and a 6-digit code from the app.
+
+   The admin sign-in only works from the shop's own address. To test the local dev page against a real deployment, deploy once with `-c allowLocalDevLogin=true` and remove it again afterwards: while it's on, a malicious page on `localhost:5173` could obtain an admin sign-in.
 6. **Run a test purchase** with card `4242 4242 4242 4242`, any future date and any CVC. The order appears in Admin → Orders → *To ship*, and you and the customer both get emails.
 
 ### If you deployed without `senderEmail`

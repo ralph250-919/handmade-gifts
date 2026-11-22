@@ -100,14 +100,18 @@ export class Api extends Construct {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Same-origin via CloudFront, so no CORS needed except for the local dev server.
+    // Same-origin via CloudFront, so no CORS is needed. localhost is allowed only when explicitly opted in.
     this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
       description: `${settings.shopName} API`,
-      corsPreflight: {
-        allowOrigins: ['http://localhost:5173'],
-        allowMethods: [apigw.CorsHttpMethod.ANY],
-        allowHeaders: ['content-type', 'authorization'],
-      },
+      ...(settings.allowLocalDevLogin
+        ? {
+            corsPreflight: {
+              allowOrigins: ['http://localhost:5173'],
+              allowMethods: [apigw.CorsHttpMethod.ANY],
+              allowHeaders: ['content-type', 'authorization'],
+            },
+          }
+        : {}),
     });
 
     const stage = this.httpApi.defaultStage!.node.defaultChild as apigw.CfnStage;

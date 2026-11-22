@@ -149,7 +149,8 @@ async function renderHome() {
     draw();
   } catch (err) {
     grid.innerHTML = '';
-    status(`${escapeHtml(err.message)} <button class="link-btn" onclick="location.reload()">Try again</button>`, 'error');
+    status(`${escapeHtml(err.message)} <button class="link-btn" data-reload>Try again</button>`, 'error');
+    $('#status [data-reload]')?.addEventListener('click', () => location.reload());
   }
 }
 

@@ -19,6 +19,8 @@ export interface ShopSettings {
   senderEmail?: string;
   monthlyBudgetUsd: number;
   cognitoDomainPrefix?: string;
+  /** Trust http://localhost:5173 for admin sign-in and CORS. Off by default; only for debugging against a real deployment. */
+  allowLocalDevLogin?: boolean;
 }
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -36,6 +38,7 @@ export class ShopStack extends cdk.Stack {
       siteUrl,
       adminEmail: settings.adminEmail,
       domainPrefix: settings.cognitoDomainPrefix,
+      allowLocalDevLogin: settings.allowLocalDevLogin,
     });
 
     const api = new Api(this, 'Api', { storage, auth, settings, siteUrl });

@@ -35,7 +35,8 @@ jobs:
   # Optional: deploy on every push to main. Create an IAM role trusted by GitHub OIDC
   # (https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
   # and set repository variables AWS_DEPLOY_ROLE_ARN and AWS_REGION to enable it.
-  # Put your cdk.json context values (emails etc.) in cdk.json before enabling.
+  # This repository may be public: don't commit email addresses to cdk.json. Pass them at deploy time
+  # instead, e.g. from repository variables: npx cdk deploy -c adminEmail=${{ vars.ADMIN_EMAIL }} ...
   deploy:
     if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
     needs: test

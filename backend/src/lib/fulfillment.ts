@@ -1,7 +1,8 @@
 import type { EmailMessage } from './email.js';
 import { newOrderOwnerEmail, orderConfirmationEmail } from './email.js';
 import type { MetricName } from './observability.js';
-import type { Order, OrderStatus, ShippingAddress } from './types.js';
+import { redactEmails } from './redact.js';
+import type { Order, OrderItem, OrderStatus, ShippingAddress } from './types.js';
 
 /** The subset of a Stripe Checkout Session that fulfillment needs. */
 export interface CheckoutSessionInfo {
@@ -14,10 +15,21 @@ export interface CheckoutSessionInfo {
   shippingAddress: ShippingAddress | null;
 }
 
+export interface PaidOrder {
+  order: Order;
+  /** Items there was not enough stock for (or whose product was deleted). They are listed in order.issues. */
+  stockConflicts: OrderItem[];
+}
+
 export interface FulfillmentDeps {
   transitionOrder(id: string, from: OrderStatus[], to: OrderStatus, fields?: Partial<Order>): Promise<Order | undefined>;
-  decrementStock(productId: string, quantity: number): Promise<boolean>;
-  addOrderIssue(id: string, issue: string): Promise<void>;
+  /**
+   * In ONE atomic write: moves a PENDING order to PAID with `fields`, takes the ordered quantities off
+   * stock, and records an issue (text from `issueFor`) for every item that couldn't be taken from stock.
+   * Returns undefined if the order is not PENDING (already processed, or unknown). Because nothing is
+   * written unless everything is, a failure part-way leaves the order PENDING and Stripe's retry redoes it.
+   */
+  markOrderPaid(id: string, fields: Partial<Order>, issueFor: (item: OrderItem) => string): Promise<PaidOrder | undefined>;
   sendEmail(msg: EmailMessage): Promise<void>;
   metric(name: MetricName, value?: number): void;
   log(level: 'info' | 'warn' | 'error', message: string, extra?: Record<string, unknown>): void;
@@ -66,34 +78,36 @@ export async function handleCheckoutEvent(
   }
 }
 
+export const stockConflictIssue = (item: OrderItem) =>
+  `Not enough stock for "${item.name}" (ordered ${item.quantity}). Contact the customer about timing or a refund.`;
+
 async function markPaid(deps: FulfillmentDeps, session: CheckoutSessionInfo, settings: FulfillmentSettings): Promise<WebhookOutcome> {
   const now = new Date().toISOString();
-  const order = await deps.transitionOrder(session.id, ['PENDING'], 'PAID', {
-    paidAt: now,
-    totalCents: session.amountTotal ?? undefined,
-    shippingCents: session.shippingCents ?? undefined,
-    customerEmail: session.customerEmail ?? undefined,
-    customerName: session.customerName ?? session.shippingAddress?.name ?? undefined,
-    shippingAddress: session.shippingAddress ?? undefined,
-  });
-  if (!order) {
+  const result = await deps.markOrderPaid(
+    session.id,
+    {
+      paidAt: now,
+      totalCents: session.amountTotal ?? undefined,
+      shippingCents: session.shippingCents ?? undefined,
+      customerEmail: session.customerEmail ?? undefined,
+      customerName: session.customerName ?? session.shippingAddress?.name ?? undefined,
+      shippingAddress: session.shippingAddress ?? undefined,
+    },
+    stockConflictIssue,
+  );
+  if (!result) {
     // Already processed (Stripe retries webhooks) or unknown order.
     deps.log('info', 'Order already processed or not found', { orderId: session.id });
     return 'duplicate';
   }
+  const { order, stockConflicts } = result;
 
   deps.metric('CheckoutCompleted');
   deps.metric('OrderRevenueCents', order.totalCents ?? order.subtotalCents);
   deps.log('info', 'Order paid', { orderId: order.id, totalCents: order.totalCents });
-
-  for (const item of order.items) {
-    const ok = await deps.decrementStock(item.productId, item.quantity);
-    if (!ok) {
-      const issue = `Not enough stock for "${item.name}" (ordered ${item.quantity}). Contact the customer about timing or a refund.`;
-      deps.metric('StockConflict');
-      deps.log('warn', 'Stock conflict', { orderId: order.id, productId: item.productId });
-      await deps.addOrderIssue(order.id, issue);
-    }
+  for (const item of stockConflicts) {
+    deps.metric('StockConflict');
+    deps.log('warn', 'Stock conflict', { orderId: order.id, productId: item.productId });
   }
 
   if (settings.emailEnabled === false) {
@@ -103,13 +117,18 @@ async function markPaid(deps: FulfillmentDeps, session: CheckoutSessionInfo, set
   const emails: EmailMessage[] = [];
   if (order.customerEmail) emails.push(orderConfirmationEmail(order, settings.shopName));
   if (settings.ownerEmail) emails.push(newOrderOwnerEmail(order, settings.ownerEmail, settings.siteUrl));
-  for (const msg of emails) {
+  for (const [i, msg] of emails.entries()) {
     try {
       await deps.sendEmail(msg);
     } catch (err) {
       // Don't fail the webhook: the order is saved; the alarm tells the owner to follow up.
+      // Never log the address itself: SES error messages can contain it too, so scrub them.
       deps.metric('OrderEmailFailed');
-      deps.log('error', 'Failed to send order email', { orderId: order.id, to: msg.to, error: (err as Error).message });
+      deps.log('error', 'Failed to send order email', {
+        orderId: order.id,
+        recipient: i === 0 && order.customerEmail ? 'customer' : 'owner',
+        error: redactEmails((err as Error).message ?? String(err)),
+      });
     }
   }
   return 'paid';
