@@ -16,7 +16,7 @@ import { UserFacingError } from '../backend/src/lib/errors.js';
 import { buildCatalogCsv } from '../backend/src/lib/feed.js';
 import { handleCheckoutEvent } from '../backend/src/lib/fulfillment.js';
 import { slugify } from '../backend/src/lib/slug.js';
-import type { Order, OrderStatus, Product } from '../backend/src/lib/types.js';
+import type { Order, OrderStatus, Product, StockChange } from '../backend/src/lib/types.js';
 import { toPublic } from '../backend/src/handlers/products.js';
 import seed from './seed-data.json' with { type: 'json' };
 
@@ -48,24 +48,53 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+// In-memory versions of the DynamoDB writes, with the same all-or-nothing behaviour.
+function transitionOrder(id: string, from: OrderStatus[], to: OrderStatus, fields: Partial<Order> = {}) {
+  const o = orders.get(id);
+  if (!o || !from.includes(o.status)) return undefined;
+  Object.assign(o, fields, { status: to, updatedAt: now() });
+  return { ...o };
+}
+
+function createPendingOrder(o: Order): string | undefined {
+  const short = (o.reservedStock ?? []).find((r) => {
+    const p = products.get(r.productId);
+    return !p || p.stock === null || p.stock < r.quantity;
+  });
+  if (short) return short.productId;
+  for (const r of o.reservedStock ?? []) {
+    const p = products.get(r.productId)!;
+    p.stock = p.stock! - r.quantity;
+    p.updatedAt = now();
+  }
+  orders.set(o.id, o);
+  return undefined;
+}
+
 const fulfillmentDeps = {
-  async transitionOrder(id: string, from: OrderStatus[], to: OrderStatus, fields: Partial<Order> = {}) {
+  async getOrder(id: string) {
+    const o = orders.get(id);
+    return o && { ...o };
+  },
+  async transitionOrderWithStock(id: string, from: OrderStatus[], to: OrderStatus, fields: Partial<Order>, stock: StockChange[]) {
     const o = orders.get(id);
     if (!o || !from.includes(o.status)) return undefined;
-    Object.assign(o, fields, { status: to, updatedAt: now() });
-    return { ...o };
+    const shortfalls: string[] = [];
+    for (const c of stock) {
+      const p = products.get(c.productId);
+      if (!p || p.stock === null) continue;
+      if (p.stock + c.delta < 0) {
+        shortfalls.push(c.productId);
+        if (c.shortfallIssue) o.issues = [...(o.issues ?? []), c.shortfallIssue];
+        continue;
+      }
+      p.stock += c.delta;
+      p.updatedAt = now();
+    }
+    return { order: transitionOrder(id, from, to, fields)!, shortfalls };
   },
-  async decrementStock(id: string, q: number) {
-    const p = products.get(id);
-    if (!p) return false;
-    if (p.stock === null) return true;
-    if (p.stock < q) return false;
-    p.stock -= q;
-    return true;
-  },
-  async addOrderIssue(id: string, issue: string) {
-    const o = orders.get(id)!;
-    o.issues = [...(o.issues ?? []), issue];
+  async markOrderNotified(id: string) {
+    orders.get(id)!.notifiedAt = now();
   },
   async sendEmail(msg: { to: string; subject: string; text: string }) {
     console.log(`\n📧 [email to ${msg.to}] ${msg.subject}\n${msg.text}\n`);
@@ -117,7 +146,8 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
     const result = await startCheckout(
       {
         getProductsByIds: async (ids) => new Map(ids.flatMap((id) => (products.has(id) ? [[id, products.get(id)!] as const] : []))),
-        createPendingOrder: async (o) => void orders.set(o.id, o),
+        createPendingOrder: async (o) => createPendingOrder(o),
+        expireSession: async () => {},
         createSession: async () => {
           const id = `cs_dev_${randomUUID().slice(0, 8)}`;
           return { id, url: `${SITE}/dev-checkout?session=${id}` };
@@ -139,7 +169,13 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
     const existing = products.get(match[1]!);
     if (!existing) return send(res, 404, { error: 'Product not found' });
     if (m === 'DELETE') return products.delete(existing.id), send(res, 204, '');
-    const prod = productInput(await json(), existing);
+    const body = await json();
+    const prod = productInput(body, existing);
+    // Same rule as the real API: only save stock if the admin changed it, and not over a sale.
+    const baseStock = body.baseStock ?? null;
+    if (prod.stock !== baseStock && existing.stock !== baseStock)
+      return send(res, 409, { error: `The stock of "${existing.name}" changed to ${existing.stock ?? 'made to order'} while you were editing (probably a sale). Check the stock and save again.`, code: 'STOCK_CHANGED' });
+    if (prod.stock === baseStock) prod.stock = existing.stock;
     products.set(prod.id, prod);
     return send(res, 200, prod);
   }
@@ -148,7 +184,7 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
     return send(res, 200, { orders: [...orders.values()].filter((o) => o.status === status).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
   }
   if ((match = p.match(/^\/api\/admin\/orders\/([^/]+)\/ship$/))) {
-    const o = await fulfillmentDeps.transitionOrder(match[1]!, ['PAID'], 'SHIPPED', { ...(await json()), shippedAt: now() });
+    const o = transitionOrder(match[1]!, ['PAID'], 'SHIPPED', { ...(await json()), shippedAt: now() });
     if (!o) return send(res, 409, { error: 'Only paid orders can be marked as shipped' });
     await fulfillmentDeps.sendEmail({ to: o.customerEmail ?? '', subject: 'Your order is on its way', text: `Tracking: ${o.trackingNumber ?? '-'}` });
     return send(res, 200, { order: o, emailed: true });

@@ -27,6 +27,20 @@ export interface OrderItem {
   quantity: number;
 }
 
+export interface StockReservation {
+  productId: string;
+  quantity: number;
+}
+
+/** A change to a product's stock that is applied together with an order update. */
+export interface StockChange {
+  productId: string;
+  /** Negative takes stock, positive puts it back. */
+  delta: number;
+  /** Recorded on the order if the product doesn't have enough stock for a negative delta. */
+  shortfallIssue?: string;
+}
+
 export interface ShippingAddress {
   name?: string | null;
   line1?: string | null;
@@ -53,6 +67,14 @@ export interface Order {
   carrier?: string;
   /** Problems needing the owner's attention (e.g. sold more than in stock). */
   issues?: string[];
+  /**
+   * Stock taken off products when checkout started; it is put back if the checkout
+   * expires or the payment fails. Missing on orders created before stock reservation
+   * existed: their stock is taken when they are paid instead.
+   */
+  reservedStock?: StockReservation[];
+  /** When the order confirmation emails were sent (so a retried webhook doesn't send them twice). */
+  notifiedAt?: string;
   createdAt: string;
   updatedAt: string;
   paidAt?: string;

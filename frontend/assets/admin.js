@@ -7,6 +7,9 @@ let config;
 let token;
 let products = [];
 let images = [];
+// Stock when the edit form was opened. Sales change stock meanwhile, so the server
+// only saves the stock field if it differs from this (and refuses if a sale changed it).
+let baseStock = null;
 
 const status = (html, kind = '') => ($('#status').innerHTML = html ? `<div class="notice ${kind}">${html}</div>` : '');
 const store = {
@@ -189,6 +192,7 @@ function editProduct(p) {
   f.elements.description.value = p?.description ?? '';
   f.elements.price.value = p ? (p.priceCents / 100).toFixed(2) : '';
   f.elements.stock.value = p?.stock ?? '';
+  baseStock = p?.stock ?? null;
   f.elements.category.value = p?.category ?? '';
   f.elements.active.checked = p?.active ?? true;
   $('#delete').hidden = !p;
@@ -210,13 +214,27 @@ async function saveProduct(e) {
     images,
   };
   const id = f.elements.id.value;
+  if (id) body.baseStock = baseStock;
   try {
-    await call(id ? `/api/admin/products/${id}` : '/api/admin/products', { method: id ? 'PUT' : 'POST', body });
+    await call(id ? `/api/admin/products/${encodeURIComponent(id)}` : '/api/admin/products', { method: id ? 'PUT' : 'POST', body });
     status('Saved. The shop updates within about a minute.', 'ok');
     f.hidden = true;
     loadProducts();
   } catch (err) {
     status(escapeHtml(err.message), 'error');
+    if (err.code === 'STOCK_CHANGED') {
+      // Show the new stock and keep the admin's other edits; saving again uses it as the new base.
+      try {
+        const { products: latest } = await call('/api/admin/products');
+        const p = latest.find((x) => x.id === id);
+        if (p) {
+          baseStock = p.stock;
+          f.elements.stock.value = p.stock ?? '';
+        }
+      } catch {
+        /* the message above already explains what to do */
+      }
+    }
   }
 }
 
