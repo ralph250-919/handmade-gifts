@@ -32,6 +32,10 @@ function cancellationCodes(err: unknown): (string | undefined)[] | undefined {
   return e?.name === 'TransactionCanceledException' ? (e.CancellationReasons ?? []).map((r) => r.Code) : undefined;
 }
 
+/** Waits a little before retrying a transaction that collided with another write to the same item. */
+const conflictBackoff = (attempt: number) => new Promise((r) => setTimeout(r, (attempt + 1) * 25 + Math.random() * 50));
+const CONFLICT_RETRIES = 4;
+
 /** A transaction item that changes a product's stock, only if the product exists and tracks stock (and has enough). */
 function stockUpdate(change: StockChange, now: string) {
   const take = change.delta < 0;
@@ -131,22 +135,29 @@ export async function deleteProduct(id: string): Promise<void> {
  */
 export async function createPendingOrder(order: Order): Promise<string | undefined> {
   const reserve = order.reservedStock ?? [];
-  const now = new Date().toISOString();
-  try {
-    await doc.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          { Put: { TableName: ordersTable(), Item: order, ConditionExpression: 'attribute_not_exists(id)' } },
-          ...reserve.map((r) => stockUpdate({ productId: r.productId, delta: -r.quantity }, now)),
-        ],
-      }),
-    );
-    return undefined;
-  } catch (err) {
-    const codes = cancellationCodes(err);
-    const failed = codes?.findIndex((c, i) => i > 0 && c === 'ConditionalCheckFailed') ?? -1;
-    if (failed > 0) return reserve[failed - 1]!.productId;
-    throw err;
+  for (let attempt = 0; ; attempt++) {
+    const now = new Date().toISOString();
+    try {
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            { Put: { TableName: ordersTable(), Item: order, ConditionExpression: 'attribute_not_exists(id)' } },
+            ...reserve.map((r) => stockUpdate({ productId: r.productId, delta: -r.quantity }, now)),
+          ],
+        }),
+      );
+      return undefined;
+    } catch (err) {
+      const codes = cancellationCodes(err);
+      const failed = codes?.findIndex((c, i) => i > 0 && c === 'ConditionalCheckFailed') ?? -1;
+      if (failed > 0) return reserve[failed - 1]!.productId;
+      // Another checkout touched the same product at the same moment: try again shortly.
+      if (codes?.includes('TransactionConflict') && attempt < CONFLICT_RETRIES) {
+        await conflictBackoff(attempt);
+        continue;
+      }
+      throw err;
+    }
   }
 }
 
@@ -224,8 +235,8 @@ export async function transitionOrderWithStock(
   let changes = stock.filter((c) => c.delta !== 0);
   const issues: string[] = [];
   const shortfalls: string[] = [];
-  // Each retry drops at least one change, so this ends.
-  for (;;) {
+  // Each stock retry drops at least one change; conflict retries are capped.
+  for (let conflicts = 0; ; ) {
     try {
       const now = new Date().toISOString();
       await doc.send(
@@ -240,8 +251,15 @@ export async function transitionOrderWithStock(
       if (!codes) throw err;
       if (codes[0] === 'ConditionalCheckFailed') return undefined;
       const failed = changes.filter((_, i) => codes[i + 1] === 'ConditionalCheckFailed');
-      // Anything else (e.g. a conflicting transaction) is temporary: let the caller retry.
-      if (failed.length === 0) throw err;
+      if (failed.length === 0) {
+        // Another write touched the same item at the same moment: retry shortly, then give up
+        // (the webhook returns 500 and Stripe retries later).
+        if (codes.includes('TransactionConflict') && conflicts < CONFLICT_RETRIES) {
+          await conflictBackoff(conflicts++);
+          continue;
+        }
+        throw err;
+      }
       for (const c of failed) {
         if (c.delta >= 0) continue;
         const product = await getProduct(c.productId);

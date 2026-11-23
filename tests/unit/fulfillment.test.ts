@@ -121,6 +121,13 @@ describe('handleCheckoutEvent: payment', () => {
     expect(metrics.filter((m) => m === 'OrderEmailFailed')).toHaveLength(2);
   });
 
+  it('never writes customer email addresses to the logs when an email fails', async () => {
+    const { deps } = fakeDeps();
+    vi.mocked(deps.sendEmail).mockRejectedValue(new Error('Email address is not verified: buyer@example.com'));
+    await paid(deps);
+    expect(JSON.stringify(vi.mocked(deps.log).mock.calls)).not.toMatch(/buyer@example\.com|owner@shop\.example/);
+  });
+
   it('skips emails without counting failures when no sender is configured', async () => {
     const { deps, orders, metrics } = fakeDeps();
     expect(await paid(deps, undefined, undefined, { ...settings, emailEnabled: false })).toBe('paid');

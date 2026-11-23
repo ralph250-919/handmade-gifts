@@ -4,6 +4,7 @@ import { emailEnabled, sendEmail, shippedEmail } from '../lib/email.js';
 import { UserFacingError } from '../lib/errors.js';
 import { adminEmail, httpHandler, json, parseJsonBody } from '../lib/http.js';
 import { countMetric, logger, Metric } from '../lib/observability.js';
+import { safeError } from '../lib/redact.js';
 import type { OrderStatus } from '../lib/types.js';
 
 const statuses = ['PENDING', 'PAID', 'SHIPPED', 'EXPIRED', 'CANCELLED'] as const;
@@ -38,7 +39,7 @@ export const handler = httpHandler(async (event) => {
       emailed = true;
     } catch (err) {
       countMetric(Metric.OrderEmailFailed);
-      logger.error('Failed to send shipping email', err as Error);
+      logger.error('Failed to send shipping email', { orderId: id, error: safeError(err) });
     }
   }
   return json(200, { order, emailed });

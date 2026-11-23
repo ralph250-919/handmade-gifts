@@ -6,6 +6,7 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
+import { contentSecurityPolicy } from './csp.js';
 import { repoRoot } from './shop-stack.js';
 
 /** CloudFront in front of the static site (/), product photos (/images/*) and the API (/api/*). */
@@ -13,12 +14,23 @@ export class Frontend extends Construct {
   readonly distribution: cloudfront.Distribution;
   private readonly siteBucket: s3.IBucket;
 
-  constructor(scope: Construct, id: string, props: { siteBucket: s3.IBucket; imagesBucket: s3.IBucket }) {
+  constructor(scope: Construct, id: string, props: { siteBucket: s3.IBucket; imagesBucket: s3.IBucket; cognitoOrigin: string }) {
     super(scope, id);
     this.siteBucket = props.siteBucket;
 
+    const region = cdk.Stack.of(this).region;
+    const csp = contentSecurityPolicy([
+      props.cognitoOrigin, // admin sign-in token exchange
+      // Admin photo uploads (presigned PUT). The SDK may use either host form depending on region.
+      `https://${props.imagesBucket.bucketName}.s3.${region}.amazonaws.com`,
+      `https://${props.imagesBucket.bucketName}.s3.amazonaws.com`,
+      `https://dataplane.rum.${region}.amazonaws.com`, // CloudWatch RUM
+      `https://cognito-identity.${region}.amazonaws.com`,
+      `https://sts.${region}.amazonaws.com`,
+    ]);
     const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
       securityHeadersBehavior: {
+        contentSecurityPolicy: { contentSecurityPolicy: csp, override: true },
         strictTransportSecurity: { accessControlMaxAge: cdk.Duration.days(365), includeSubdomains: true, override: true },
         contentTypeOptions: { override: true },
         frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },

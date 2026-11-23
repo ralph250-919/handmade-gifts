@@ -1,6 +1,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { UserFacingError } from './errors.js';
 import { logger, metrics } from './observability.js';
+import { safeError } from './redact.js';
 
 export type HttpEvent = APIGatewayProxyEventV2;
 export type HttpResult = APIGatewayProxyStructuredResultV2;
@@ -44,7 +45,7 @@ export function httpHandler(
         logger.warn('Request rejected', { code: err.code, message: err.message, statusCode: err.statusCode });
         return json(err.statusCode, { error: err.message, code: err.code });
       }
-      logger.error('Unhandled error', err as Error);
+      logger.error('Unhandled error', { error: safeError(err) });
       return json(500, {
         error: 'Something went wrong on our side. Please try again in a moment.',
         code: 'INTERNAL',

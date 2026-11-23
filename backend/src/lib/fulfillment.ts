@@ -1,6 +1,7 @@
 import type { EmailMessage } from './email.js';
 import { newOrderOwnerEmail, orderConfirmationEmail } from './email.js';
 import type { MetricName } from './observability.js';
+import { redactEmails } from './redact.js';
 import type { Order, OrderStatus, ShippingAddress, StockChange } from './types.js';
 
 /** The subset of a Stripe Checkout Session that fulfillment needs. */
@@ -144,13 +145,18 @@ async function markPaid(deps: FulfillmentDeps, session: CheckoutSessionInfo, set
     const emails: EmailMessage[] = [];
     if (order.customerEmail) emails.push(orderConfirmationEmail(order, settings.shopName));
     if (settings.ownerEmail) emails.push(newOrderOwnerEmail(order, settings.ownerEmail, settings.siteUrl));
-    for (const msg of emails) {
+    for (const [i, msg] of emails.entries()) {
       try {
         await deps.sendEmail(msg);
       } catch (err) {
         // Don't fail the webhook: the order is saved; the alarm tells the owner to follow up.
+        // Never log the address itself: SES error messages can contain it too, so scrub them.
         deps.metric('OrderEmailFailed');
-        deps.log('error', 'Failed to send order email', { orderId: order.id, to: msg.to, error: (err as Error).message });
+        deps.log('error', 'Failed to send order email', {
+          orderId: order.id,
+          recipient: i === 0 && order.customerEmail ? 'customer' : 'owner',
+          error: redactEmails((err as Error).message ?? String(err)),
+        });
       }
     }
   }

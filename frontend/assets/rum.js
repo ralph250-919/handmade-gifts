@@ -11,7 +11,8 @@ getConfig()
       z.async = true;
       z.src = s;
       document.head.insertBefore(z, document.head.getElementsByTagName('script')[0]);
-    })('cwr', rum.appMonitorId, '1.0.0', rum.region, 'https://client.rum.us-east-1.amazonaws.com/1.x/cwr.js', {
+      // Pinned version (not "1.x") so new client code can't appear on the site unreviewed.
+    })('cwr', rum.appMonitorId, '1.0.0', rum.region, 'https://client.rum.us-east-1.amazonaws.com/1.25.0/cwr.js', {
       sessionSampleRate: 1,
       identityPoolId: rum.identityPoolId,
       guestRoleArn: rum.guestRoleArn,

@@ -19,6 +19,8 @@ export interface ShopSettings {
   senderEmail?: string;
   monthlyBudgetUsd: number;
   cognitoDomainPrefix?: string;
+  /** Trust http://localhost:5173 for admin sign-in and CORS. Off by default; only for debugging against a real deployment. */
+  allowLocalDevLogin?: boolean;
 }
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -29,13 +31,20 @@ export class ShopStack extends cdk.Stack {
     const { settings } = props;
 
     const storage = new Storage(this, 'Storage', { senderEmail: settings.senderEmail });
-    const frontend = new Frontend(this, 'Frontend', { siteBucket: storage.siteBucket, imagesBucket: storage.imagesBucket });
+    // Known up front so the CSP can allow exactly this sign-in host (the Cognito client in turn needs the site URL).
+    const cognitoDomainPrefix = settings.cognitoDomainPrefix ?? `shop-admin-${this.account}`;
+    const frontend = new Frontend(this, 'Frontend', {
+      siteBucket: storage.siteBucket,
+      imagesBucket: storage.imagesBucket,
+      cognitoOrigin: `https://${cognitoDomainPrefix}.auth.${this.region}.amazoncognito.com`,
+    });
     const siteUrl = `https://${frontend.distribution.distributionDomainName}`;
 
     const auth = new AdminAuth(this, 'AdminAuth', {
       siteUrl,
       adminEmail: settings.adminEmail,
-      domainPrefix: settings.cognitoDomainPrefix,
+      domainPrefix: cognitoDomainPrefix,
+      allowLocalDevLogin: settings.allowLocalDevLogin,
     });
 
     const api = new Api(this, 'Api', { storage, auth, settings, siteUrl });

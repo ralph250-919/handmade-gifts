@@ -8,13 +8,18 @@ export class AdminAuth extends Construct {
   readonly client: cognito.UserPoolClient;
   readonly domainUrl: string;
 
-  constructor(scope: Construct, id: string, props: { siteUrl: string; adminEmail?: string; domainPrefix?: string }) {
+  constructor(
+    scope: Construct,
+    id: string,
+    props: { siteUrl: string; adminEmail?: string; domainPrefix?: string; allowLocalDevLogin?: boolean },
+  ) {
     super(scope, id);
 
     this.userPool = new cognito.UserPool(this, 'Admins', {
       selfSignUpEnabled: false,
       signInAliases: { email: true },
-      mfa: cognito.Mfa.OPTIONAL,
+      // A password alone is not enough: every admin sign-in also needs a code from an authenticator app.
+      mfa: cognito.Mfa.REQUIRED,
       mfaSecondFactor: { otp: true, sms: false },
       passwordPolicy: { minLength: 12 },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
@@ -25,14 +30,17 @@ export class AdminAuth extends Construct {
     const domain = this.userPool.addDomain('Domain', { cognitoDomain: { domainPrefix: prefix } });
     this.domainUrl = domain.baseUrl();
 
+    // The local dev server never needs a real login, so localhost is only trusted when explicitly asked for
+    // (-c allowLocalDevLogin=true). Otherwise a page on localhost could obtain a production admin token.
+    const adminUrls = [`${props.siteUrl}/admin/`, ...(props.allowLocalDevLogin ? ['http://localhost:5173/admin/'] : [])];
     this.client = this.userPool.addClient('AdminWeb', {
       generateSecret: false,
       authFlows: {},
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        callbackUrls: [`${props.siteUrl}/admin/`, 'http://localhost:5173/admin/'],
-        logoutUrls: [`${props.siteUrl}/admin/`, 'http://localhost:5173/admin/'],
+        callbackUrls: adminUrls,
+        logoutUrls: adminUrls,
       },
       idTokenValidity: cdk.Duration.hours(8),
       accessTokenValidity: cdk.Duration.hours(8),

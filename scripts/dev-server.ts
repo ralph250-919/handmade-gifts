@@ -19,6 +19,7 @@ import { slugify } from '../backend/src/lib/slug.js';
 import type { Order, OrderStatus, Product, StockChange } from '../backend/src/lib/types.js';
 import { toPublic } from '../backend/src/handlers/products.js';
 import seed from './seed-data.json' with { type: 'json' };
+import { contentSecurityPolicy } from '../infra/lib/csp.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT ?? 5173);
@@ -37,8 +38,14 @@ const uploads = new Map<string, { type: string; body: Buffer }>();
 
 const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp' };
 
+const csp = contentSecurityPolicy();
+const imageTypes: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const escapeHtml = (v: string) =>
+  v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 function send(res: ServerResponse, status: number, body: unknown, type = 'application/json') {
-  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
+  // Same security headers as production, so the browser tests catch anything the CSP would block.
+  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store', 'content-security-policy': csp, 'x-content-type-options': 'nosniff' });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
@@ -191,7 +198,9 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
   }
   if (p === '/api/admin/uploads') {
     const { contentType } = await json();
-    const key = `images/products/${randomUUID()}.${String(contentType).split('/')[1]}`;
+    const ext = Object.hasOwn(imageTypes, contentType) ? imageTypes[contentType] : undefined;
+    if (!ext) return send(res, 400, { error: 'Only JPEG, PNG or WebP images are allowed' });
+    const key = `images/products/${randomUUID()}.${ext}`;
     return send(res, 200, { uploadUrl: `${SITE}/dev-upload/${key}`, imagePath: `/${key}` });
   }
   return send(res, 404, { error: 'Not found' });
@@ -200,7 +209,7 @@ async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
 const fakeStripePage = (session: string, order?: Order) => `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Test checkout</title>
 <body style="font-family:system-ui;max-width:480px;margin:40px auto;padding:0 16px">
 <h1>Simulated Stripe Checkout</h1><p>This page stands in for Stripe locally. Total: <b>$${(((order?.subtotalCents ?? 0) + (order?.shippingCents ?? 0)) / 100).toFixed(2)}</b></p>
-<form method="post" action="/dev-checkout/pay"><input type="hidden" name="session" value="${session}">
+<form method="post" action="/dev-checkout/pay"><input type="hidden" name="session" value="${escapeHtml(session)}">
 <label>Email <input name="email" value="buyer@example.com"></label><br><br>
 <button data-testid="fake-pay" style="padding:12px 20px">Pay (test)</button> <a href="/cart.html?cancelled=1">Cancel</a></form></body>`;
 
@@ -227,7 +236,9 @@ createServer(async (req, res) => {
       return res.end();
     }
     if (url.pathname.startsWith('/dev-upload/') && req.method === 'PUT') {
-      uploads.set('/' + url.pathname.slice('/dev-upload/'.length), { type: req.headers['content-type'] ?? 'application/octet-stream', body: await readBody(req) });
+      const type = req.headers['content-type'] ?? '';
+      if (!Object.hasOwn(imageTypes, type)) return send(res, 415, { error: 'Only JPEG, PNG or WebP images are allowed' });
+      uploads.set('/' + url.pathname.slice('/dev-upload/'.length), { type, body: await readBody(req) });
       return send(res, 200, '');
     }
     if (url.pathname.startsWith('/images/sample/'))
@@ -249,4 +260,5 @@ createServer(async (req, res) => {
     console.error(err);
     return send(res, 500, { error: 'Internal error (see dev server console)' });
   }
-}).listen(PORT, () => console.log(`🛍️  Shop running at ${SITE}  ·  admin: ${SITE}/admin/`));
+  // Only reachable from this computer: the local admin API has no login.
+}).listen(PORT, '127.0.0.1', () => console.log(`🛍️  Shop running at ${SITE}  ·  admin: ${SITE}/admin/`));

@@ -16,6 +16,7 @@ const settings: ShopSettings = {
   senderEmail: ctx('senderEmail') || undefined,
   monthlyBudgetUsd: Number(ctx('monthlyBudgetUsd') ?? 20),
   cognitoDomainPrefix: ctx('cognitoDomainPrefix') || undefined,
+  allowLocalDevLogin: ctx('allowLocalDevLogin') === true || ctx('allowLocalDevLogin') === 'true',
 };
 
 new ShopStack(app, ctx('stackName') ?? 'HandmadeGiftsShop', {
