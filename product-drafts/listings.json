@@ -1,0 +1,38 @@
+[
+  {
+    "slug": "felt-daisy-bouquet",
+    "name": "Felt Daisy Bouquet",
+    "category": "Felt Flowers",
+    "priceCents": 4200,
+    "stock": 1,
+    "image": "felt-daisy-bouquet.jpg",
+    "description": "A bunch of five white felt daisies, each with layered petals and a hand-felted golden wool centre. They never wilt, so they make a cheerful year-round bouquet for a vase, a desk or a windowsill.\n\nOne of a kind: you'll receive the bouquet shown in the photo."
+  },
+  {
+    "slug": "blush-felt-rose-kissing-ball",
+    "name": "Blush Felt Rose Kissing Ball",
+    "category": "Felt Flowers",
+    "priceCents": 7200,
+    "stock": 1,
+    "image": "blush-felt-rose-kissing-ball.jpg",
+    "description": "A hanging pomander covered in hand-rolled blush-pink felt roses, finished with a gold cord loop for hanging. Lovely in a nursery, above a doorway, as a holiday ornament or as a wedding keepsake.\n\nOne of a kind: you'll receive the kissing ball shown in the photo."
+  },
+  {
+    "slug": "champagne-crystal-beaded-tassel",
+    "name": "Champagne Crystal Beaded Tassel",
+    "category": "Ornaments",
+    "priceCents": 3100,
+    "stock": 1,
+    "image": "champagne-crystal-beaded-tassel.jpg",
+    "description": "A hand-strung tassel of golden bugle beads and faceted champagne crystals that catch the light and throw little rainbows. Hang it in a window, from a lamp or on a tree branch.\n\nOne of a kind: you'll receive the tassel shown in the photo."
+  },
+  {
+    "slug": "striped-hat-gnome-with-felt-rose",
+    "name": "Striped Hat Gnome with Felt Rose",
+    "category": "Gnomes",
+    "priceCents": 9000,
+    "stock": 1,
+    "image": "striped-hat-gnome-with-felt-rose.jpg",
+    "description": "A friendly gnome in a tall knitted grey-and-cream striped hat, with a long silver beard, a wooden bead nose and a purple felt rose. A sweet shelf companion and a thoughtful little gift.\n\nOne of a kind: you'll receive the gnome shown in the photo."
+  }
+]
