@@ -1,0 +1,69 @@
+name: Post product drafts
+
+# Run by hand (Actions → Post product drafts → Run workflow) from main.
+# Uploads the photos and adds the products in product-drafts/ to the live shop using the
+# same GitHub OIDC role as the deploy job, then checks each product on the live site.
+# Products whose slug already exists are skipped, so re-running is safe.
+on:
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: Only check the products on the site; don't post anything
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-products
+  cancel-in-progress: false
+
+jobs:
+  post:
+    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Find the shop's table, bucket and URL
+        run: |
+          set -euo pipefail
+          out() { aws cloudformation describe-stacks --stack-name HandmadeGiftsShop \
+            --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          table=$(out ProductsTable)
+          site=$(out SiteUrl)
+          bucket=$(aws cloudformation list-stack-resources --stack-name HandmadeGiftsShop \
+            --query "StackResourceSummaries[?ResourceType=='AWS::S3::Bucket' && starts_with(LogicalResourceId, 'StorageImages')].PhysicalResourceId" \
+            --output text)
+          for v in "$table" "$site" "$bucket"; do
+            if [ -z "$v" ] || [ "$v" = "None" ] || [[ "$v" == *[[:space:]]* ]]; then
+              echo "Could not resolve the stack outputs (got table='$table' site='$site' bucket='$bucket')"; exit 1
+            fi
+          done
+          {
+            echo "PRODUCTS_TABLE=$table"
+            echo "IMAGES_BUCKET=$bucket"
+            echo "SITE_URL=$site"
+          } >> "$GITHUB_ENV"
+      - name: Post products and check them on the site
+        run: npx tsx scripts/post-drafts.ts ${{ inputs.verify_only && '--verify-only' || '' }}
+        env:
+          POWERTOOLS_TRACE_DISABLED: 'true'
+          POWERTOOLS_DEV: 'true'
