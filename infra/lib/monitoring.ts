@@ -11,6 +11,7 @@ import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as synthetics from 'aws-cdk-lib/aws-synthetics';
 import { Construct } from 'constructs';
 import { METRICS_NAMESPACE, SERVICE_NAME, type Api } from './api.js';
+import { SessionDashboards } from './session-dashboards.js';
 
 /**
  * Customer-experience monitoring:
@@ -19,11 +20,13 @@ import { METRICS_NAMESPACE, SERVICE_NAME, type Api } from './api.js';
  *  - Business metrics + alarms: failed checkouts, webhook failures, email failures, oversells
  *  - Technical alarms: Lambda errors, API 5xx, slow responses
  *  - Dashboard, saved Logs Insights queries and a monthly budget alert
+ *  - Shopper-session dashboards built from RUM events (see session-dashboards.ts)
  */
 export class Monitoring extends Construct {
   readonly dashboard: cw.Dashboard;
   readonly alarmTopic: sns.Topic;
   readonly rumConfig: Record<string, unknown>;
+  readonly sessionDashboards: SessionDashboards;
 
   constructor(
     scope: Construct,
@@ -101,6 +104,16 @@ export class Monitoring extends Construct {
       guestRoleArn: guestRole.roleArn,
       region: stack.region,
     };
+    // RUM writes events to /aws/vendedlogs/RUMService_<monitor name><monitor id up to its first '-'>.
+    const rumLogGroupName = cdk.Fn.join('', [
+      `/aws/vendedlogs/RUMService_${appMonitorName}`,
+      cdk.Fn.select(0, cdk.Fn.split('-', appMonitor.attrId)),
+    ]);
+    this.sessionDashboards = new SessionDashboards(this, 'Sessions', {
+      rumLogGroupName,
+      siteDomain: props.siteDomain,
+      siteUrl: props.siteUrl,
+    });
     const rumMetric = (metricName: string, statistic: string) =>
       new cw.Metric({ namespace: 'AWS/RUM', metricName, dimensionsMap: { application_name: appMonitorName }, statistic, period: cdk.Duration.minutes(5) });
 

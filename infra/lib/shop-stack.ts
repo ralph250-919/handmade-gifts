@@ -76,6 +76,10 @@ export class ShopStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DashboardUrl', {
       value: `https://${this.region}.console.aws.amazon.com/cloudwatch/home?region=${this.region}#dashboards:name=${monitoring.dashboard.dashboardName}`,
     });
+    const dashboardUrl = (d: cdk.aws_cloudwatch.Dashboard) =>
+      `https://${this.region}.console.aws.amazon.com/cloudwatch/home?region=${this.region}#dashboards:name=${d.dashboardName}`;
+    new cdk.CfnOutput(this, 'ShopperSessionsDashboardUrl', { value: dashboardUrl(monitoring.sessionDashboards.overview) });
+    new cdk.CfnOutput(this, 'SessionExplorerDashboardUrl', { value: dashboardUrl(monitoring.sessionDashboards.explorer) });
     new cdk.CfnOutput(this, 'ProductsTable', { value: storage.productsTable.tableName });
   }
 }

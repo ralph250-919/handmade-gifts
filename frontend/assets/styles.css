@@ -30,13 +30,14 @@
   --header-ink: #f4f5f7;
   --price: #15181d;
   --link: var(--gold-ink);
+  --focus: #15181d;          /* focus ring on light backgrounds (gold is too faint there) */
   --green: #146c2e;
   --accent: var(--gold);
   --accent-ink: #1d1708;
   --accent-soft: var(--gold-soft);
   --primary: var(--gold);
   --primary-ink: #1d1708;
-  /* legacy names still used by a few rules */
+  /* older token names kept as aliases */
   --blue: var(--gold-deep);
   --blue-ink: #1d1708;
   --blue-soft: var(--gold-soft);
@@ -58,7 +59,7 @@
     --bg: #0f1114; --surface: #1a1d22; --surface-2: #242930; --panel: #1a1d22;
     --ink: #eceef1; --muted: #bcc2ca; --subtle: #a3aab3; --line: #323840; --line-strong: #4f5761;
     --header-bg: #000000;
-    --price: #f4f5f7; --link: #ebcd6c; --green: #6dd58c;
+    --price: #f4f5f7; --link: #ebcd6c; --focus: var(--gold-light); --green: #6dd58c;
     --gold-soft: #3a3118; --gold-ink: #ebcd6c;
     --silver-grad: linear-gradient(180deg, #3b424b 0%, #2a3037 100%);
     --strip-grad: linear-gradient(180deg, #2c333c 0%, #1f242b 100%);
@@ -77,13 +78,14 @@ main { flex: 1; width: 100%; }
 img { max-width: 100%; display: block; }
 a { color: inherit; }
 button, input, textarea, select { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--gold); box-shadow: 0 0 0 4px rgba(212,175,55,.25); outline-offset: 2px; border-radius: 8px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
 .wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
 @media (min-width: 820px) { .wrap { padding: 0 24px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } html { scroll-behavior: auto; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- Header ---------- */
+:where(.site-header > .wrap:not(.tabs), .site-footer) :focus-visible { outline-color: var(--gold); }  /* gold reads well on black */
 .site-header { background: var(--header-bg); color: var(--header-ink); position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 0 var(--gold), 0 6px 16px rgba(15, 17, 20, .18); }
 .header-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 24px; padding-top: 12px; padding-bottom: 12px; }
 .brand { font-family: var(--display); font-size: 1.35rem; font-weight: 500; letter-spacing: -.01em; text-decoration: none; color: var(--header-ink); white-space: nowrap; line-height: 1; padding: 6px 8px; margin-left: -8px; border: 1px solid transparent; border-radius: 4px; }
@@ -96,6 +98,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .search input::-webkit-search-cancel-button { cursor: pointer; }
 .search button { border: 0; background: var(--gold-grad); width: 52px; display: grid; place-items: center; color: #1d1708; cursor: pointer; }
 .search button:hover { filter: brightness(1.06); }
+.search button:focus-visible { outline: 2px solid #15181d; outline-offset: -5px; border-radius: 6px; }
 .search svg { width: 22px; height: 22px; }
 .cart-link { position: relative; display: grid; place-items: center; width: 48px; height: 44px; border-radius: 4px; border: 1px solid transparent; color: var(--header-ink); text-decoration: none; }
 .cart-link:hover { border-color: var(--header-ink); }
@@ -107,6 +110,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; padding-bottom: 0; border-image: var(--strip-grad) fill 0 / / 0 100vmax; }
 .tabs a { position: relative; flex: none; padding: 9px 12px 10px; text-decoration: none; color: var(--ink); font-size: .92rem; font-weight: 500; border: 1px solid transparent; border-radius: 4px; margin: 3px 0; }
+.tabs a:focus-visible { outline-offset: -2px; }
 .tabs a:hover { border-color: var(--silver-deep); background: rgba(255,255,255,.35); }
 .tabs a[aria-current="page"] { color: var(--ink); font-weight: 700; }
 .tabs a[aria-current="page"]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -3px; height: 3px; border-radius: 3px 3px 0 0; background: var(--gold-grad); }
@@ -191,7 +195,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .gallery .main #main-img { width: 100%; height: 100%; object-fit: contain; }
 .thumbs { display: flex; gap: 8px; overflow-x: auto; }
 .thumbs button { border: 2px solid transparent; padding: 0; border-radius: var(--radius-sm); overflow: hidden; width: 64px; height: 64px; flex: none; cursor: pointer; background: var(--surface-2); }
-.thumbs button[aria-current="true"] { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+.thumbs button[aria-current="true"] { border-color: var(--gold-ink); box-shadow: 0 0 0 2px var(--gold-soft); }
 .thumbs img { width: 100%; height: 100%; object-fit: cover; }
 .info { display: grid; gap: 20px; align-content: start; }
 @media (min-width: 880px) { .info { position: sticky; top: 150px; } }
