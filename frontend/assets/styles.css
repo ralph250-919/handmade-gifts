@@ -26,7 +26,7 @@
   --subtle: #5d646d;
   --line: #d5d9de;
   --line-strong: #aeb5be;
-  --header-bg: var(--gunmetal);
+  --header-bg: #000000;      /* header and footer */
   --header-ink: #f4f5f7;
   --price: #15181d;
   --link: var(--gold-ink);
@@ -57,7 +57,7 @@
   :root {
     --bg: #0f1114; --surface: #1a1d22; --surface-2: #242930; --panel: #1a1d22;
     --ink: #eceef1; --muted: #bcc2ca; --subtle: #a3aab3; --line: #323840; --line-strong: #4f5761;
-    --header-bg: #0a0c0f; --gunmetal-2: #1d2228;
+    --header-bg: #000000;
     --price: #f4f5f7; --link: #ebcd6c; --green: #6dd58c;
     --gold-soft: #3a3118; --gold-ink: #ebcd6c;
     --silver-grad: linear-gradient(180deg, #3b424b 0%, #2a3037 100%);
@@ -251,7 +251,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .center-panel .btn { margin-top: 24px; }
 
 /* ---------- Footer ---------- */
-.site-footer { background: var(--gunmetal-2); border-top: 3px solid var(--gold); padding: 32px 0; color: #c9ced5; font-size: .88rem; }
+.site-footer { background: var(--header-bg); border-top: 3px solid var(--gold); padding: 32px 0; color: #c9ced5; font-size: .88rem; }
 .site-footer .brand { color: #f4f5f7; }
 .site-footer .wrap { display: flex; justify-content: space-between; gap: 16px 40px; flex-wrap: wrap; align-items: center; }
 .site-footer > .wrap > div:first-child { display: grid; gap: 4px; }
